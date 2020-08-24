@@ -1,4 +1,4 @@
-SIMULATE = ~~1; % flag to re-run simulation instead of using existing data
+SIMULATE = ~~0; % flag to re-run simulation instead of using existing data
 
 if SIMULATE
     clear;
@@ -8,19 +8,19 @@ close all;
 global X Y Z dZdx dZdy FRAMES ANIMATE RECORD PLOT
 
 % VISUALIZATION FLAGS
-ANIMATE = ~~0; % flag to animate robot motion
-RECORD = ~~0; % flag to save animations as video files
+ANIMATE = ~~1; % flag to animate robot motion
+RECORD = ~~1; % flag to save animations as video files
 PLOT = ~~1; % flag to plot final robot condition and path
 
 % SIMULATION PARAMETERS
-CONFIGURATIONS = {@step}; % step functions to compare
-LABELS = {'Normal', 'Tangential', 'Ratio', 'Normal (ideal)', ...
+CONFIGURATIONS = {@solveStep}; % step functions to compare
+LABELS = {'Normal', 'Tangential', 'Ratio', 'Joint Torque', 'Normal (ideal)', ...
     'Tangential (ideal)'}; % legend entries for configurations
-COLORS = ['b', 'r', 'k'];
-SCORES = 3; % number of output variables
-SWEEP = -180:5:180; % values for parameter being swept
+COLORS = ['b', 'r', 'k', 'g'];
+SCORES = 4; % number of output variables
+SWEEP = 90; % values for parameter being swept
 SAMPLES = 1; % number of duplicate samples to average at each value
-STEPS = 1; % number of robot steps to simulate per trial
+STEPS = 20; % number of robot steps to simulate per trial
 TIME_STEP = 0.25; % delay between frame updates for animation
 
 % SET VIEW WINDOW SIZE
@@ -48,7 +48,7 @@ for iter = 1:size(rawScores,1)
     % GENERATE TERRAIN
     if SIMULATE
         [X, Y, Z, dZdx, dZdy] = terrain([-1.5, 1.5], [-1.5 2.5], .02, ...
-            [1,1,0.5]*0, [1, .25, 0.0625], 0);
+            [1,1,0.5], [1, .25, 0.0625], 0);
     end
     
     % SETUP SIMULATION
@@ -64,25 +64,29 @@ for iter = 1:size(rawScores,1)
     % RUN SIMULATION
     fail = 0;
     for i = 1:STEPS
-        if ~SIMULATE
+        if ~SIMULATE && ~ANIMATE && ~RECORD
             break
         end
         for config = 1:length(CONFIGURATIONS)
             stepFunc = CONFIGURATIONS{config};
             lastRobot = robots{iter, config}(i);
-            robot = stepFunc(lastRobot, mod(i,2), Z);
-            robots{iter, config}(i+1) = robot;
-            if ~min(robot.c)
-                fail = 1;
-                break
+            if SIMULATE
+                robot = stepFunc(lastRobot, mod(i,2), Z);
+                robots{iter, config}(i+1) = robot;
+            else
+                robot = robots{iter, config}(i+1);
             end
             if RECORD
                 figure(config);
-        elseif ANIMATE
+            elseif ANIMATE
                 subplot(1, length(CONFIGURATIONS), config);
                 title(LABELS{config});
             end
             animateStep(lastRobot, robot, TIME_STEP, mod(i,2), config);
+            if ~min(robot.c)
+                fail = 1;
+                break
+            end
         end
         if fail
             break
@@ -96,30 +100,57 @@ for iter = 1:size(rawScores,1)
                 break
             end
             
+            % COMPUTE FORCES
             robot = robots{iter, config}(end);
             odd = 1-mod(length(robots{iter, config}),2);
             footFront = robot.feet(:,odd+1) - robot.centroid;
             footBack = robot.feet(:,odd+3) - robot.centroid;
             footBack2 = robot.feet(:,4-odd) - robot.centroid;
-            dig = 0.5*max(0,-cosd(sweep))*(~odd-odd);
+            dig = 0*max(0,-cosd(sweep))*(~odd-odd);
             grav = [0;-sind(sweep);-cosd(sweep)];
-            [F1, F2, N3] = forces(footFront, footBack, footBack2, ...
-                [0;0;-1], dig, grav);
             f1 = robot.feet(:,odd+1);
             f2 = robot.feet(:,odd+3);
             n3 = robot.feet(:,4-odd);
-            
+            nvec = [-f(n3(1),n3(2),dZdx);-f(n3(1),n3(2),dZdy);1];
+            f1vec = [-f(f1(1),f1(2),dZdx);-f(f1(1),f1(2),dZdy);1];
+            f2vec = [-f(f2(1),f2(2),dZdx);-f(f2(1),f2(2),dZdy);1];
+            nvec = nvec/norm(nvec);
+            f1vec = f1vec/norm(f1vec);
+            f2vec = f2vec/norm(f2vec);
+            F = zeros(3,4);
+            [F1, F2, N3] = forces(footFront, footBack, footBack2, ...
+                nvec, dig, grav);
+            F(:,odd+1) = F1;
+            F(:,odd+3) = F2;
+            F(:,4-odd) = N3;
             if N3'*[0;0;-1] > 0
                 footBack2 = robot.feet(:,2-odd) - robot.centroid;
                 n3 = robot.feet(:,2-odd);
                 [F1, F2, N3] = forces(footFront, footBack, footBack2, ...
-                    [0;0;-1], dig, grav);
+                    nvec, dig, grav);
+                F(:,4-odd) = 0;
+                F(:,2-odd) = N3;
             end
             
-            normalForce = max(-F1(3), -F2(3));
+            % COMPUTE TORQUES
+            T = zeros(3, sum(robot.dof));
+            for i = 1:size(robot.feet, 2)
+                j = sum(robot.dof(1:i-1));
+                if robot.dof(i) == 3
+                    knee = getKnee(robot.shoulders(:,i),...
+                        robot.feet(:,i), robot.L2, robot.L3, robot.R);
+                    T(:,j+1:j+2) = torques([robot.legs(:,i), robot.feet(:,i)-knee],...
+                                           [F(:,i), F(:,i)]);
+                else
+                    T(:,j+1) = torques(robot.legs(:,i), F(:,i));
+                end
+            end
+            
+            normalForce = max(-F1'*f1vec, -F2'*f2vec);
             normalForce(normalForce <= 0) = 0;
-            tangentForce = max(norm(F1(1:2)), norm(F2(1:2)));
+            tangentForce = max(norm(cross(F1,f1vec)), norm(cross(F2,f2vec)));
             ratio = normalForce/tangentForce;
+            ratio(ratio>2) = NaN;
             
             path = [robots{iter, config}.centroid];
             distance = path(2,end) - path(2,1);
@@ -128,6 +159,7 @@ for iter = 1:size(rawScores,1)
             rawScores(iter, 1) = normalForce;
             rawScores(iter, 2) = tangentForce;
             rawScores(iter, 3) = ratio;
+            rawScores(iter, 4) = max(vecnorm(T));
             
             if PLOT
                 if RECORD
@@ -140,10 +172,26 @@ for iter = 1:size(rawScores,1)
                 
                 c = robot.centroid;
                 k = 0.8;
-                quiver3(f1(1), -f1(3), f1(2), F1(1)*k, -F1(3)*k, F1(2)*k,'linewidth', 2);
-                quiver3(f2(1), -f2(3), f2(2), F2(1)*k, -F2(3)*k, F2(2)*k,'linewidth', 2);
-                quiver3(n3(1), -n3(3), n3(2), N3(1)*k, -N3(3)*k, N3(2)*k,'linewidth', 2);
-                quiver3(c(1), -c(3), c(2), grav(1)*k, -grav(3)*k, grav(2)*k,'linewidth', 2);
+                quiver3(f1(1), -f1(3), f1(2), F1(1)*k, -F1(3)*k, F1(2)*k,'g','linewidth', 2);
+                quiver3(f2(1), -f2(3), f2(2), F2(1)*k, -F2(3)*k, F2(2)*k,'g','linewidth', 2);
+                quiver3(n3(1), -n3(3), n3(2), N3(1)*k, -N3(3)*k, N3(2)*k,'g','linewidth', 2);
+                quiver3(c(1), -c(3), c(2), grav(1)*k, -grav(3)*k, grav(2)*k,'g','linewidth', 2);
+                
+                k = 5;
+                for i = 1:size(robot.feet, 2)
+                    j = sum(robot.dof(1:i-1));
+                    if robot.dof(i) == 3
+                        knee = getKnee(robot.shoulders(:,i),...
+                            robot.feet(:,i), robot.L2, robot.L3, robot.R);
+                        quiver3(robot.shoulders(1,i), -robot.shoulders(3,i), robot.shoulders(2,i),...
+                            T(1,j+1)*k, -T(3,j+1)*k, T(2,j+1)*k, 'c', 'linewidth', 2);
+                        quiver3(knee(1), -knee(3), knee(2),...
+                            T(1,j+2)*k, -T(3,j+2)*k, T(2,j+2)*k, 'c', 'linewidth', 2);
+                    else
+                        quiver3(robot.shoulders(1,i), -robot.shoulders(3,i), robot.shoulders(2,i),...
+                            T(1,j+1)*k, -T(3,j+1)*k, T(2,j+1)*k, 'c', 'linewidth', 2);
+                    end
+                end
                 
                 plot3(path(1,:), -path(3,:), path(2,:),'k','linewidth', 2);
                 title(LABELS{config});
@@ -220,9 +268,19 @@ function z = f(x, y, Z)
     elseif y < min(Y(:,1))
         y = min(Y(:,1));
     end
-    i = round(1+(x-X(1,1))/(X(2,2)-X(1,1)));
-    j = round(1+(y-Y(1,1))/(Y(2,2)-Y(1,1)));
-    z = Z(sub2ind(size(Z), j, i));
+    dx = X(2,2)-X(1,1);
+    x0 = x-X(1,1);
+    y0 = y-Y(1,1);    
+    i1 = floor(1+x0/dx);
+    j1 = floor(1+y0/dx);
+    i2 = ceil(1+x0/dx);
+    j2 = ceil(1+y0/dx);
+    c = Z(sub2ind(size(Z), [j1; j1; j2; j2], [i1; i2; i1; i2]));
+    xp = x0/dx - i1 + 1;
+    yp = y0/dx - j1 + 1;
+    y1 = c(1,:).*(1-xp) + c(2,:).*xp;
+    y2 = c(3,:).*(1-xp) + c(4,:).*xp;
+    z = y1.*(1-yp) + y2.*yp;
 end
 
 % VISUALIZATION FUNCTIONS
@@ -272,7 +330,8 @@ function animateStep(r1, r2, dt, odd, window)
     if ~ANIMATE && ~RECORD
         return
     end
-    dc = r2.centroid - r1.centroid;
+    db = r2.body - r1.body;
+    ds = r2.shoulders - r1.shoulders;
     df = r2.feet - r1.feet;
     plotTerrain();
     p = mod((0:3)+odd,2);
@@ -280,16 +339,16 @@ function animateStep(r1, r2, dt, odd, window)
     plotPoints(r1.feet(:,~r1.c&p), 'r.');
     c = ['b', 'r'];
     for t = 0:dt:1
-        g.body = fill3(r1.body(1,:)+t*dc(1), -r1.body(3,:)-t*dc(3), r1.body(2,:)+t*dc(2), 'r');
+        g.body = fill3(r1.body(1,:)+t*db(1,:), -r1.body(3,:)-t*db(3,:), r1.body(2,:)+t*db(2,:), 'r');
         for i = 1:size(r1.feet,2)
             ci = c(mod(i+odd,2)+1);
             if r1.dof(i) == 3
-                knee = getKnee(r1.shoulders(:,i)+t*dc, r1.feet(:,i)+t*df(:,i), r1.L2, r1.L3, r1.R);
+                knee = getKnee(r1.shoulders(:,i)+t*ds(:,i), r1.feet(:,i)+t*df(:,i), r1.L2, r1.L3, r1.R);
                 g.feet(i) = plotLine(r1.feet(:,i)+t*df(:,i), knee, ci);
-                g.feet(i+4) = plotLine(r1.shoulders(:,i)+t*dc, knee, ci);
+                g.feet(i+4) = plotLine(r1.shoulders(:,i)+t*ds(:,i), knee, ci);
             else
                 g.feet(i) = plotLine(r1.feet(:,i)+t*df(:,i), ...
-                                     r1.shoulders(:,i)+t*dc, ci);
+                                     r1.shoulders(:,i)+t*ds(:,i), ci);
             end
         end
         drawnow();
@@ -557,6 +616,7 @@ function r = step12DOF(r, odd, Z)
 end
 
 function r = solveStep(r, odd, Z)
+    r.dof = [3 3 2 2];
     r.heading = 2*r.centroid(1);
     r.heading
     r.body = r.body + r.R*[0; r.dx*2; 0];
@@ -582,23 +642,23 @@ function r = solveStep(r, odd, Z)
     T0 = (r.shoulders(:,1) + r.shoulders(:,2))/2 - r.centroid;
     N0 = (r.shoulders(:,1) + r.shoulders(:,4))/2 - r.centroid;
     X0 = [r.centroid; T0; N0; reshape(r.legs, [12,1])];
-    normal = 100*N0(1:2);
+    normal = N0;
     if odd
         Aeq = [eye(3), eye(3), eye(3), eye(3), zeros(3,9);
                eye(3), -eye(3), -eye(3), zeros(3,6), eye(3), zeros(3);
-               zeros(1,3), normal',0, zeros(1,15);
+               zeros(1,3), normal', zeros(1,15);
                0 1 0, 0 1 0, 0 -1 0, zeros(1,3), 0 1 0, zeros(1,6);
                0 1 0, 0 -1 0, 0 1 0, zeros(1,9), 0 1 0];
         beq = [r.feet(:,1); r.feet(:,3); 0; r.feet(2, 2); r.feet(2, 4)];
     else
         Aeq = [eye(3), eye(3), -eye(3), zeros(3), eye(3), zeros(3,6);
                eye(3), -eye(3), eye(3), zeros(3,9), eye(3);
-               zeros(1,3), normal',0, zeros(1,15);
+               zeros(1,3), normal', zeros(1,15);
                0 1 0, 0 1 0, 0 1 0, 0 1 0, zeros(1,9);
                0 1 0, 0 -1 0, 0 -1 0, zeros(1,6), 0 1 0, zeros(1, 3)];
         beq = [r.feet(:,2); r.feet(:,4); 0; r.feet(2, 1); r.feet(2, 3)];
     end
-    options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,'Algorithm','interior-point','ConstraintTolerance',1e-3);
+    options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,'Algorithm','interior-point','ConstraintTolerance',1e-4);
     delta = [r.w; r.w; r.h];
     b1 = [r.L2+r.L3; r.L2+r.L3; Inf];
     b2 = [0; r.L2+r.L3; Inf];
@@ -610,10 +670,10 @@ function r = solveStep(r, odd, Z)
     else
         r.c = ~[1 1 1 1];
     end
-    output.constrviolation
-    [cFinal,ceqFinal] = constraints(x, r, odd)
-    costFinal = cost(x, r)
-    linearFinal = Aeq*x - beq
+%     output.constrviolation
+%     [cFinal,ceqFinal] = constraints(x, r, odd);
+%     costFinal = cost(x, r)
+%     linearFinal = Aeq*x - beq
     
     r.body(:,1) = x(1:3)+x(4:6)+x(7:9);
     r.body(:,2) = x(1:3)+x(4:6)-x(7:9);
@@ -630,22 +690,7 @@ function r = solveStep(r, odd, Z)
 end
 
 function c = cost(x, r)
-%     global Z
-%     z = f(r.centroid(1), r.centroid(2), Z);
     c = norm(r.centroid(1:2) - x(1:2));
-    return
-%     B = cross(x(4:6), x(7:9));
-    body = [x(1:3)+x(4:6)+x(7:9);
-            x(1:3)+x(4:6)-x(7:9);
-            x(1:3)-x(4:6)-x(7:9);
-            x(1:3)-x(4:6)+x(7:9);
-            x(1:3)+x(7:9);
-            x(1:3)-x(7:9)];
-    z = [f(body(1), body(2), Z);f(body(4), body(5), Z);
-         f(body(7), body(8), Z);f(body(10), body(11), Z);
-         f(body(13), body(14), Z);f(body(16), body(17), Z)];
-%     legs = [x(10:12)'*B; x(13:15)'*B; x(16:18)'*B; x(19:21)'*B]./norm(B);
-    c = sum((body([3,6,9,12,15,18])-z-r.clearance).^2);
 end
 
 function [c,ceq] = constraints(x, r, odd)
@@ -657,16 +702,13 @@ function [c,ceq] = constraints(x, r, odd)
         foot1 = x(1:3)+x(4:6)+x(7:9)+x(10:12);
         foot3 = x(1:3)-x(4:6)-x(7:9)+x(16:18);
     end
-    ceq = [%norm(x(16:18))-r.L1;
-%            norm(x(19:21))-r.L1;
+    ceq = [norm(x(16:18))-r.L1;
+           norm(x(19:21))-r.L1;
            x(4:6)'*x(7:9);
            norm(x(4:6))-r.h/2;
            norm(x(7:9))-r.w/2;
            foot1(3)-f(foot1(1), foot1(2), Z);
            foot3(3)-f(foot3(1), foot3(2), Z)];
-%     lb = [min(X(1,:));min(Y(:,1));-Inf];
-%     ub = [max(X(1,:));max(Y(:,1));Inf];
-
     
     body = [x(1:3)+x(4:6)+x(7:9);
             x(1:3)+x(4:6)-x(7:9);
@@ -681,12 +723,10 @@ function [c,ceq] = constraints(x, r, odd)
 
     c = [norm(x(10:12))-(r.L2+r.L3);
          norm(x(13:15))-(r.L2+r.L3);
-         norm(x(16:18))-(r.L2+r.L3);
-         norm(x(19:21))-(r.L2+r.L3);
+%          norm(x(16:18))-(r.L2+r.L3);
+%          norm(x(19:21))-(r.L2+r.L3);
          z-body([3,6,9,12,15,18])+r.clearance;
          -B(3)];
-%          [lb;lb;lb;lb]-x(10:21);
-%          x(10:21)-[ub;ub;ub;ub]];
 end
 
 function robot = update(robot)
@@ -817,4 +857,11 @@ function [F1, F2, N3] = forces(r1, r2, r3, N, DIG, g)
 %     max(abs(A*F - b))
 %     F1 + F2 + N3 + g
 %     cross(r1,F1) + cross(r2,F2) + cross(r3,N3)
+end
+
+function T = torques(r, F)
+    T = zeros(size(F));
+    for i = 1:size(r, 2)
+        T(:,i) = cross(r(:,i), F(:,i));
+    end
 end

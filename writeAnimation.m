@@ -1,3 +1,4 @@
+% USAGE: writeAnimation(FRAMES{1}, 'Filename')
 function writeAnimation(M, name)
     minx = 100000;
     miny = 100000;
