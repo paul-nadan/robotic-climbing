@@ -1,4 +1,4 @@
-SIMULATE = ~~0; % flag to re-run simulation instead of using existing data
+SIMULATE = ~~0; % flag to run new simulation instead of using existing data
 
 if SIMULATE
     clear;
@@ -8,20 +8,25 @@ close all;
 global X Y Z dZdx dZdy FRAMES ANIMATE RECORD PLOT
 
 % VISUALIZATION FLAGS
-ANIMATE = ~~1; % flag to animate robot motion
-RECORD = ~~1; % flag to save animations as video files
-PLOT = ~~1; % flag to plot final robot condition and path
+ANIMATE = ~~0; % flag to animate robot motion
+RECORD = ~~0; % flag to save animations as video files
+PLOT = ~~0; % flag to plot final robot condition and path
 
 % SIMULATION PARAMETERS
-CONFIGURATIONS = {@solveStep}; % step functions to compare
-LABELS = {'Normal', 'Tangential', 'Ratio', 'Joint Torque', 'Normal (ideal)', ...
-    'Tangential (ideal)'}; % legend entries for configurations
-COLORS = ['b', 'r', 'k', 'g'];
-SCORES = 4; % number of output variables
-SWEEP = 90; % values for parameter being swept
-SAMPLES = 1; % number of duplicate samples to average at each value
+CONFIGURATIONS = {@(r,odd,z)solveStep(r,odd,z,[2 2 2 2]),...
+                  @(r,odd,z)solveStep(r,odd,z,[2 3 2 2]),...
+                  @(r,odd,z)solveStep(r,odd,z,[3 3 2 2]),...
+                  @(r,odd,z)solveStep(r,odd,z,[3 3 3 2]),...
+                  @(r,odd,z)solveStep(r,odd,z,[3 3 3 3]),}; % step functions to compare
+SCORES = {'Normal Force', 'Tangential Force', 'Joint Torque'}; % output variable names
+CONFIG_NAMES = {'8-DoF', '9-DoF', '10-DoF', '11-DoF', '12-DoF'}; % configuration names
+COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
+
+SWEEP = .3:.1:1; % values for parameter being swept
+SAMPLES = 10; % number of duplicate samples to average at each value
 STEPS = 20; % number of robot steps to simulate per trial
 TIME_STEP = 0.25; % delay between frame updates for animation
+DISCARD_FAILS = 0; % aborts iteration for all configs if any one fails
 
 % SET VIEW WINDOW SIZE
 if RECORD
@@ -36,8 +41,8 @@ elseif ANIMATE || PLOT
 end
 
 % SWEEP PARAMETER
-rawScores = zeros(length(SWEEP)*SAMPLES, length(CONFIGURATIONS)*SCORES);
-sumScores = zeros(length(SWEEP), length(CONFIGURATIONS)*SCORES+1);
+rawScores = zeros(length(SWEEP)*SAMPLES, length(CONFIGURATIONS), length(SCORES));
+sumScores = zeros(length(SWEEP), length(CONFIGURATIONS), length(SCORES)+1);
 if SIMULATE
     robots = cell(size(rawScores));
 end
@@ -48,10 +53,10 @@ for iter = 1:size(rawScores,1)
     % GENERATE TERRAIN
     if SIMULATE
         [X, Y, Z, dZdx, dZdy] = terrain([-1.5, 1.5], [-1.5 2.5], .02, ...
-            [1,1,0.5], [1, .25, 0.0625], 0);
+            [1,1,0.5]*sweep, [1, .25, 0.0625], 0);
     end
     
-    % SETUP SIMULATION
+    % INITIALIZE ROBOT
     for config = 1:length(CONFIGURATIONS)
         if ~SIMULATE
             break
@@ -62,7 +67,7 @@ for iter = 1:size(rawScores,1)
     end
     
     % RUN SIMULATION
-    fail = 0;
+    aborted = 0;
     for i = 1:STEPS
         if ~SIMULATE && ~ANIMATE && ~RECORD
             break
@@ -70,7 +75,10 @@ for iter = 1:size(rawScores,1)
         for config = 1:length(CONFIGURATIONS)
             stepFunc = CONFIGURATIONS{config};
             lastRobot = robots{iter, config}(i);
-            if SIMULATE
+            if ~min(lastRobot.c)
+                robot = lastRobot;
+                robots{iter, config}(i+1) = robot;
+            elseif SIMULATE
                 robot = stepFunc(lastRobot, mod(i,2), Z);
                 robots{iter, config}(i+1) = robot;
             else
@@ -80,87 +88,51 @@ for iter = 1:size(rawScores,1)
                 figure(config);
             elseif ANIMATE
                 subplot(1, length(CONFIGURATIONS), config);
-                title(LABELS{config});
+                title(CONFIG_NAMES{config});
             end
             animateStep(lastRobot, robot, TIME_STEP, mod(i,2), config);
-            if ~min(robot.c)
-                fail = 1;
+            if DISCARD_FAILS && ~min(robot.c)
+                aborted = 1;
+                fprintf('Failed on configuration: %d\n', config);
                 break
             end
         end
-        if fail
+        if aborted
             break
         end
     end
     
     % EVALUATE ITERATION RESULTS
-    if ~fail
+    if ~aborted
         for config = 1:length(CONFIGURATIONS)
-            if fail
-                break
-            end
-            
-            % COMPUTE FORCES
+            % Compute scores
             robot = robots{iter, config}(end);
             odd = 1-mod(length(robots{iter, config}),2);
-            footFront = robot.feet(:,odd+1) - robot.centroid;
-            footBack = robot.feet(:,odd+3) - robot.centroid;
-            footBack2 = robot.feet(:,4-odd) - robot.centroid;
-            dig = 0*max(0,-cosd(sweep))*(~odd-odd);
-            grav = [0;-sind(sweep);-cosd(sweep)];
-            f1 = robot.feet(:,odd+1);
-            f2 = robot.feet(:,odd+3);
-            n3 = robot.feet(:,4-odd);
-            nvec = [-f(n3(1),n3(2),dZdx);-f(n3(1),n3(2),dZdy);1];
-            f1vec = [-f(f1(1),f1(2),dZdx);-f(f1(1),f1(2),dZdy);1];
-            f2vec = [-f(f2(1),f2(2),dZdx);-f(f2(1),f2(2),dZdy);1];
-            nvec = nvec/norm(nvec);
-            f1vec = f1vec/norm(f1vec);
-            f2vec = f2vec/norm(f2vec);
-            F = zeros(3,4);
-            [F1, F2, N3] = forces(footFront, footBack, footBack2, ...
-                nvec, dig, grav);
-            F(:,odd+1) = F1;
-            F(:,odd+3) = F2;
-            F(:,4-odd) = N3;
-            if N3'*[0;0;-1] > 0
-                footBack2 = robot.feet(:,2-odd) - robot.centroid;
-                n3 = robot.feet(:,2-odd);
-                [F1, F2, N3] = forces(footFront, footBack, footBack2, ...
-                    nvec, dig, grav);
-                F(:,4-odd) = 0;
-                F(:,2-odd) = N3;
-            end
+            [F, Fnorm, Ftang, T] = quasiStaticDynamics(robot, odd);
             
-            % COMPUTE TORQUES
-            T = zeros(3, sum(robot.dof));
-            for i = 1:size(robot.feet, 2)
-                j = sum(robot.dof(1:i-1));
-                if robot.dof(i) == 3
-                    knee = getKnee(robot.shoulders(:,i),...
-                        robot.feet(:,i), robot.L2, robot.L3, robot.R);
-                    T(:,j+1:j+2) = torques([robot.legs(:,i), robot.feet(:,i)-knee],...
-                                           [F(:,i), F(:,i)]);
-                else
-                    T(:,j+1) = torques(robot.legs(:,i), F(:,i));
-                end
-            end
-            
-            normalForce = max(-F1'*f1vec, -F2'*f2vec);
-            normalForce(normalForce <= 0) = 0;
-            tangentForce = max(norm(cross(F1,f1vec)), norm(cross(F2,f2vec)));
+            normalForce = max([Fnorm, 0]);
+            tangentForce = max(Ftang);
             ratio = normalForce/tangentForce;
             ratio(ratio>2) = NaN;
             
             path = [robots{iter, config}.centroid];
             distance = path(2,end) - path(2,1);
             pathLength = sum(vecnorm(diff(path, 1, 2)));
-%             rawScores(iter, config) = distance/pathLength;
-            rawScores(iter, 1) = normalForce;
-            rawScores(iter, 2) = tangentForce;
-            rawScores(iter, 3) = ratio;
-            rawScores(iter, 4) = max(vecnorm(T));
             
+            % Record scores
+%             rawScores(iter, config) = distance/pathLength;
+            rawScores(iter, config, 1) = normalForce;
+            rawScores(iter, config, 2) = tangentForce;
+            rawScores(iter, config, 3) = max(vecnorm(T));
+%             rawScores(iter, config, 4) = ratio;
+            
+            % Ignore individual faiiled samples
+            if ~min(robot.c) || norm(F(:,odd+1))+norm(F(:,odd+3)) > 100
+                rawScores(iter, config, :) = 0;
+                sumScores(iSweep, config, end) = sumScores(iSweep, config, end)-1;
+            end
+            
+            % Plot final robot state
             if PLOT
                 if RECORD
                     figure(config);
@@ -169,60 +141,58 @@ for iter = 1:size(rawScores,1)
                 end
                 plotTerrain();
                 plotRobot(robots{iter, config}(end));
-                
-                c = robot.centroid;
-                k = 0.8;
-                quiver3(f1(1), -f1(3), f1(2), F1(1)*k, -F1(3)*k, F1(2)*k,'g','linewidth', 2);
-                quiver3(f2(1), -f2(3), f2(2), F2(1)*k, -F2(3)*k, F2(2)*k,'g','linewidth', 2);
-                quiver3(n3(1), -n3(3), n3(2), N3(1)*k, -N3(3)*k, N3(2)*k,'g','linewidth', 2);
-                quiver3(c(1), -c(3), c(2), grav(1)*k, -grav(3)*k, grav(2)*k,'g','linewidth', 2);
-                
-                k = 5;
-                for i = 1:size(robot.feet, 2)
-                    j = sum(robot.dof(1:i-1));
-                    if robot.dof(i) == 3
-                        knee = getKnee(robot.shoulders(:,i),...
-                            robot.feet(:,i), robot.L2, robot.L3, robot.R);
-                        quiver3(robot.shoulders(1,i), -robot.shoulders(3,i), robot.shoulders(2,i),...
-                            T(1,j+1)*k, -T(3,j+1)*k, T(2,j+1)*k, 'c', 'linewidth', 2);
-                        quiver3(knee(1), -knee(3), knee(2),...
-                            T(1,j+2)*k, -T(3,j+2)*k, T(2,j+2)*k, 'c', 'linewidth', 2);
-                    else
-                        quiver3(robot.shoulders(1,i), -robot.shoulders(3,i), robot.shoulders(2,i),...
-                            T(1,j+1)*k, -T(3,j+1)*k, T(2,j+1)*k, 'c', 'linewidth', 2);
-                    end
-                end
-                
+                plotForces(robot, F, 'g', 0.016);
+                plotTorques(robot, T, 'c', 0.1);
                 plot3(path(1,:), -path(3,:), path(2,:),'k','linewidth', 2);
-                title(LABELS{config});
+                title(CONFIG_NAMES{config});
                 drawnow();
             end
+            
+            % Print iteration results
+            fprintf('Sweep: %.3f, Configuration: %d, Sample: %d, Scores: [', sweep, config, mod(iter, SAMPLES));
+            fprintf('%.3f, ', rawScores(iter, config, :));
+            fprintf(']\n');
         end
-        sumScores(iSweep, :) = sumScores(iSweep, :) + ...
-            [rawScores(iter, :), 1];
+        sumScores(iSweep, :, :) = sumScores(iSweep, :, :) + ...
+            cat(3, rawScores(iter, :, :), ones(1,length(CONFIGURATIONS)));
     end
-    fprintf('Sweep: %.3f, Sample: %d, Scores: [', sweep, 1+mod(iter, SAMPLES));
-    fprintf('%.3f, ', rawScores(iter, :));
-    fprintf(']\n');
 end
 
 % EVALUATE CUMULATIVE RESULTS
-meanScores = sumScores(:, 1:end-1)./sumScores(:, end);
+meanScores = sumScores(:, :, 1:end-1)./sumScores(:, :, end);
 if size(meanScores,1) > 1
-    if RECORD
-        figure(length(CONFIGURATIONS)+1);
-    elseif PLOT || ANIMATE
-        figure(2);
+    if length(CONFIGURATIONS) > 1
+        figure('units','normalized','outerposition',...
+        [0 0.2, 0.3*length(SCORES) 0.45]);
+    else
+        figure();
     end
-    for config = 1:size(rawScores, 2)
-        plot(SWEEP, meanScores(:,config), COLORS(config), 'linewidth', 3);
-        hold on;
+    
+    % If multiple configs and scores, use separate figures for each score
+    for score = 1:length(SCORES)
+        if length(CONFIGURATIONS) > 1
+            subplot(1, length(SCORES), score);
+        end
+        for config = 1:length(CONFIGURATIONS)
+            c = COLORS{score};
+            if length(CONFIGURATIONS) > 1
+                c = COLORS{config};
+            end
+            plot(SWEEP, meanScores(:,config,score), 'color', c, 'linewidth', 3);
+            hold on;
+        end
+        xlabel('Terrain Difficulty');
+        ylabel('Force (N) / Torque (N-m)');
+        if length(CONFIGURATIONS) > 1
+            legend(CONFIG_NAMES, 'Location','northwest');
+            title(SCORES{score});
+        elseif score == length(SCORES)
+            legend(SCORES, 'Location','northwest');
+            title(CONFIG_NAMES{1});
+        end
+    %     plot(SWEEP, max(0,-cosd(SWEEP)/2), 'b--', 'linewidth', 3);
+    %     plot(SWEEP, abs(sind(SWEEP)/2), 'r--', 'linewidth', 3);
     end
-    xlabel('Orientation (degrees)');
-    ylabel('Force');
-    plot(SWEEP, max(0,-cosd(SWEEP)/2), 'b--', 'linewidth', 3);
-    plot(SWEEP, abs(sind(SWEEP)/2), 'r--', 'linewidth', 3);
-    legend(LABELS);
 end
 
 
@@ -255,7 +225,7 @@ function [xq, yq, zq, dzdx, dzdy] = terrain(x, y, res, slope, roughness, corner)
     dzdy = dzdy(:, 1:end-1);
 end
 
-% Find value of function Z at (x,y) by rounding indices
+% Find value of function Z at (x,y) by interpolation
 function z = f(x, y, Z)
     global X Y
     if x > max(X(1,:))
@@ -286,10 +256,7 @@ end
 % VISUALIZATION FUNCTIONS
 
 function plotTerrain()
-    global X Y Z PLOT
-    if ~PLOT
-        return
-    end
+    global X Y Z
     cla();
     mesh(X,-Z,Y);
     hold on
@@ -311,6 +278,36 @@ function plotRobot(r)
             plotLine(r.shoulders(:,i), knee, 'b');
         else
             plotLine(r.feet(:,i), r.shoulders(:,i), 'b');
+        end
+    end
+end
+
+function plotForces(robot, F, color, scale)
+    for i = 1:size(F, 2)-1
+        foot = robot.feet(:, i);
+        quiver3(foot(1), -foot(3), foot(2), F(1, i)*scale, ...
+            -F(3, i)*scale, F(2, i)*scale, color, 'linewidth', 2);
+    end
+    c = robot.centroid;
+    quiver3(c(1), -c(3), c(2), F(1, end)*scale, -F(3, end)*scale, ...
+        F(2, end)*scale, color, 'linewidth', 2);
+end
+
+function plotTorques(robot, T, color, scale)
+    for iF = 1:size(robot.feet, 2)
+        iJ = sum(robot.dof(1:iF-1)-1);
+        if robot.dof(iF) == 3
+            knee = getKnee(robot.shoulders(:,iF),...
+                robot.feet(:,iF), robot.L2, robot.L3, robot.R);
+            quiver3(robot.shoulders(1,iF), -robot.shoulders(3,iF),...
+                robot.shoulders(2,iF), T(1,iJ+1)*scale, ...
+                -T(3,iJ+1)*scale, T(2,iJ+1)*scale, color, 'linewidth', 2);
+            quiver3(knee(1), -knee(3), knee(2), T(1,iJ+2)*scale, ...
+                -T(3,iJ+2)*scale, T(2,iJ+2)*scale, color, 'linewidth', 2);
+        else
+            quiver3(robot.shoulders(1,iF), -robot.shoulders(3,iF),...
+                robot.shoulders(2,iF), T(1,iJ+1)*scale, ...
+                -T(3,iJ+1)*scale, T(2,iJ+1)*scale, color, 'linewidth', 2);
         end
     end
 end
@@ -615,10 +612,9 @@ function r = step12DOF(r, odd, Z)
     end
 end
 
-function r = solveStep(r, odd, Z)
-    r.dof = [3 3 2 2];
+function r = solveStep(r, odd, Z, dof)
+    r.dof = dof;
     r.heading = 2*r.centroid(1);
-    r.heading
     r.body = r.body + r.R*[0; r.dx*2; 0];
     r = update(r);
     r = bodyPitchJoint(r, -r.alpha);
@@ -658,7 +654,9 @@ function r = solveStep(r, odd, Z)
                0 1 0, 0 -1 0, 0 -1 0, zeros(1,6), 0 1 0, zeros(1, 3)];
         beq = [r.feet(:,2); r.feet(:,4); 0; r.feet(2, 1); r.feet(2, 3)];
     end
-    options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,'Algorithm','interior-point','ConstraintTolerance',1e-4);
+    options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
+        'Algorithm','interior-point','ConstraintTolerance',1e-4,...
+        'Display','notify-detailed');
     delta = [r.w; r.w; r.h];
     b1 = [r.L2+r.L3; r.L2+r.L3; Inf];
     b2 = [0; r.L2+r.L3; Inf];
@@ -702,8 +700,10 @@ function [c,ceq] = constraints(x, r, odd)
         foot1 = x(1:3)+x(4:6)+x(7:9)+x(10:12);
         foot3 = x(1:3)-x(4:6)-x(7:9)+x(16:18);
     end
-    ceq = [norm(x(16:18))-r.L1;
-           norm(x(19:21))-r.L1;
+    ceq = [(norm(x(10:12))-r.L1)*(r.dof(1)==2);
+           (norm(x(13:15))-r.L1)*(r.dof(2)==2);
+           (norm(x(16:18))-r.L1)*(r.dof(3)==2);
+           (norm(x(19:21))-r.L1)*(r.dof(4)==2);
            x(4:6)'*x(7:9);
            norm(x(4:6))-r.h/2;
            norm(x(7:9))-r.w/2;
@@ -721,10 +721,10 @@ function [c,ceq] = constraints(x, r, odd)
          f(body(13), body(14), Z);f(body(16), body(17), Z)];
     B = cross(x(4:6), x(7:9));
 
-    c = [norm(x(10:12))-(r.L2+r.L3);
-         norm(x(13:15))-(r.L2+r.L3);
-%          norm(x(16:18))-(r.L2+r.L3);
-%          norm(x(19:21))-(r.L2+r.L3);
+    c = [(norm(x(10:12))-(r.L2+r.L3))*(r.dof(1)==3)-(r.dof(1)~=3);
+         (norm(x(13:15))-(r.L2+r.L3))*(r.dof(2)==3)-(r.dof(2)~=3);
+         (norm(x(16:18))-(r.L2+r.L3))*(r.dof(3)==3)-(r.dof(3)~=3);
+         (norm(x(19:21))-(r.L2+r.L3))*(r.dof(4)==3)-(r.dof(4)~=3);
          z-body([3,6,9,12,15,18])+r.clearance;
          -B(3)];
 end
@@ -842,6 +842,69 @@ end
 
 % QUASI-STATIC DYNAMICS
 
+% Find forces at [feet, centroid] and torques at [shoulder 1, knee 1, ...]
+function [F, Fnorm, Ftang, T] = quasiStaticDynamics(r, odd)
+    global dZdx dZdy
+    
+    GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
+    DIG_FORCE = 0; % Magnitude of max directed inward grasping force (N)
+    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
+    
+    % Find normal vectors
+    fvec = zeros(3,4);
+    for iFoot = 1:size(fvec, 2)
+        foot = r.feet(:,iFoot);
+        fvec(:,iFoot) = [-f(foot(1),foot(2),dZdx);...
+                       -f(foot(1),foot(2),dZdy); 1];
+        fvec(:,iFoot) = fvec(:,iFoot)/norm(fvec(:,iFoot));
+    end
+    
+    % Find contact forces
+    footFront = r.feet(:,odd+1) - r.centroid;
+    footBack = r.feet(:,odd+3) - r.centroid;
+    footBack2 = r.feet(:,4-odd) - r.centroid;
+    dig = DIG_FORCE*max(0,-cosd(GRAVITY_ANGLE))*(~odd-odd);
+    grav = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
+    nvec = fvec(:,4-odd);
+    [F1, F2, N3] = forces(footFront, footBack, footBack2, ...
+        nvec, dig, grav);
+    F = zeros(3,5);
+    F(:,4-odd) = N3;
+    F(:,5) = grav;
+    if N3'*[0;0;-1] > 0
+        footFront2 = r.feet(:,2-odd) - r.centroid;
+        nvec = fvec(:,2-odd);
+        [F1, F2, N3] = forces(footFront, footBack, footFront2, ...
+            nvec, dig, grav);
+        F(:,4-odd) = 0;
+        F(:,2-odd) = N3;
+    end
+    F(:,odd+1) = F1;
+    F(:,odd+3) = F2;
+    
+    % Decompose forces into components
+    Fnorm = zeros(1,4);
+    Ftang = zeros(1,4);
+    for iFoot = 1:size(fvec, 2)
+        Fnorm(iFoot) = -F(:,iFoot)'*fvec(:,iFoot);
+        Ftang(iFoot) = norm(cross(F(:,iFoot),fvec(:,iFoot)));
+    end
+    
+    % Compute torques
+    T = zeros(3, sum(r.dof-1));
+    for iFoot = 1:size(r.feet, 2)
+        iJoint = sum(r.dof(1:iFoot-1)-1);
+        if r.dof(iFoot) == 3
+            knee = getKnee(r.shoulders(:,iFoot),...
+                r.feet(:,iFoot), r.L2, r.L3, r.R);
+            T(:,iJoint+1:iJoint+2) = torques([r.legs(:,iFoot), ...
+                r.feet(:,iFoot)-knee], [F(:,iFoot), F(:,iFoot)]);
+        else
+            T(:,iJoint+1) = torques(r.legs(:,iFoot), F(:,iFoot));
+        end
+    end
+end
+
 % Compute forces on feet given displacement from CoM and gravity vector
 function [F1, F2, N3] = forces(r1, r2, r3, N, DIG, g)
     A = [eye(3), eye(3), N;
@@ -854,11 +917,9 @@ function [F1, F2, N3] = forces(r1, r2, r3, N, DIG, g)
     F1 = F(1:3);
     F2 = F(4:6);
     N3 = F(7)*N;
-%     max(abs(A*F - b))
-%     F1 + F2 + N3 + g
-%     cross(r1,F1) + cross(r2,F2) + cross(r3,N3)
 end
 
+% Compute torques at joints given moment arms and force vectors
 function T = torques(r, F)
     T = zeros(size(F));
     for i = 1:size(r, 2)
