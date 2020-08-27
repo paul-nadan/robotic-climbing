@@ -1,7 +1,8 @@
-SIMULATE = ~~0; % flag to run new simulation instead of using existing data
+SIMULATE = ~~1; % flag to run new simulation instead of using existing data
 
 if SIMULATE
     clear;
+    clear GLOBAL;
     SIMULATE = 1;
 end
 close all;
@@ -69,7 +70,7 @@ for iter = 1:size(rawScores,1)
     % RUN SIMULATION
     aborted = 0;
     for i = 1:STEPS
-        if ~SIMULATE && ~ANIMATE && ~RECORD
+        if ~SIMULATE && ~ANIMATE && ~RECORD && ~DISCARD_FAILS
             break
         end
         for config = 1:length(CONFIGURATIONS)
@@ -106,13 +107,23 @@ for iter = 1:size(rawScores,1)
     if ~aborted
         for config = 1:length(CONFIGURATIONS)
             % Compute scores
-            robot = robots{iter, config}(end);
-            odd = 1-mod(length(robots{iter, config}),2);
-            [F, Fnorm, Ftang, T] = quasiStaticDynamics(robot, odd);
-            
-            normalForce = max([Fnorm, 0]);
-            tangentForce = max(Ftang);
-            ratio = normalForce/tangentForce;
+            normalForce = zeros(1,STEPS);
+            tangentForce = zeros(1,STEPS);
+            torque = zeros(1,STEPS);
+            for i = 1:STEPS
+                robot = robots{iter, config}(i+1);
+                odd = mod(i,2);
+                [F, Fnorm, Ftang, T] = quasiStaticDynamics(robot, odd);
+                normalForce(i) = max([Fnorm, 0]);
+                tangentForce(i) = max(Ftang);
+                torque(i) = max(vecnorm(T));
+                if norm(F(:,odd+1))+norm(F(:,odd+3)) > 100
+                    normalForce(i) = NaN;
+                    tangentForce(i) = NaN;
+                    torque(i) = NaN; 
+                end
+            end
+            ratio = normalForce./tangentForce;
             ratio(ratio>2) = NaN;
             
             path = [robots{iter, config}.centroid];
@@ -121,13 +132,13 @@ for iter = 1:size(rawScores,1)
             
             % Record scores
 %             rawScores(iter, config) = distance/pathLength;
-            rawScores(iter, config, 1) = normalForce;
-            rawScores(iter, config, 2) = tangentForce;
-            rawScores(iter, config, 3) = max(vecnorm(T));
+            rawScores(iter, config, 1) = mean(normalForce, 'omitnan');
+            rawScores(iter, config, 2) = mean(tangentForce, 'omitnan');
+            rawScores(iter, config, 3) = mean(torque, 'omitnan');
 %             rawScores(iter, config, 4) = ratio;
             
-            % Ignore individual faiiled samples
-            if ~min(robot.c) || norm(F(:,odd+1))+norm(F(:,odd+3)) > 100
+            % Ignore individual failed samples
+            if ~min(robot.c)
                 rawScores(iter, config, :) = 0;
                 sumScores(iSweep, config, end) = sumScores(iSweep, config, end)-1;
             end
@@ -417,201 +428,6 @@ function r = placeRobot(centroid, stepFunc, sweep)
     r = stepFunc(r, 0, Z);
 end
 
-function r = step(r, odd, Z)
-    r.dof = [3 3 2 2];
-    r.heading = 2*r.centroid(1);
-    r.body = r.body + r.R*[0; r.dx*2; 0];
-    r = update(r);
-    r = bodyPitchJoint(r, -r.alpha);
-%     r = bodyPitchJoint(r, deg2rad(45)*(abs(r.body(2,3))<0.1));
-%     r = bodyPitchJoint(r, -deg2rad(45)*(abs(r.body(2,3))<0.15)*(r.body(2,3)<-0.05));
-    headingVec = (r.shoulders(:,1) + r.shoulders(:,2) - r.shoulders(:,3) - r.shoulders(:,4))/2;  
-    heading = atan2(-headingVec(1), headingVec(2));
-    yawErr = max(-r.dyaw, min(r.dyaw, r.heading-heading));
-    r = yaw(r, yawErr, odd);
-    
-    if odd
-        r.feet(:,2) = r.shoulders(:,2) + r.R*r.Ralpha*[r.L1; r.dx; 0];
-        r.feet(:,4) = r.shoulders(:,4) + r.R*[-r.L1; r.dx; 0];
-        [~, r.feet(:,2), r.c(2)] = contact(r.feet(:,2),[0;1;0],r.body(:,2), Z, r.R*r.Ralpha);
-        [~, r.feet(:,4), r.c(4)] = contact(r.feet(:,4),[0;1;0],r.body(:,5), Z, r.R);
-    else
-        r.feet(:,1) = r.shoulders(:,1) + r.R*r.Ralpha*[-r.L1; r.dx; 0];
-        r.feet(:,3) = r.shoulders(:,3) + r.R*[r.L1; r.dx; 0];
-        [~, r.feet(:,1), r.c(1)] = contact(r.feet(:,1),[0;1;0],r.body(:,1), Z, r.R*r.Ralpha);
-        [~, r.feet(:,3), r.c(3)] = contact(r.feet(:,3),[0;1;0],r.body(:,4), Z, r.R);
-    end
-    
-    lastError = 1000;
-    count = 0;
-    fail = 0;
-    
-    for i = 1:200
-        count = count + 1;
-        if odd
-            r.feet(:,2) = r.shoulders(:,2) + r.R*r.Ralpha*[r.L1; r.dx; 0];
-            r.feet(:,4) = r.shoulders(:,4) + r.R*[-r.L1; r.dx; 0];
-            [~, r.feet(:,2), r.c(2)] = contact(r.feet(:,2),[0;1;0],r.body(:,2), Z, r.R*r.Ralpha);
-            [~, r.feet(:,4), r.c(4)] = contact(r.feet(:,4),[0;1;0],r.body(:,5), Z, r.R);
-            frontleg = 2;
-        else
-            r.feet(:,1) = r.shoulders(:,1) + r.R*r.Ralpha*[-r.L1; r.dx; 0];
-            r.feet(:,3) = r.shoulders(:,3) + r.R*[r.L1; r.dx; 0];
-            [~, r.feet(:,1), r.c(1)] = contact(r.feet(:,1),[0;1;0],r.body(:,1), Z, r.R*r.Ralpha);
-            [~, r.feet(:,3), r.c(3)] = contact(r.feet(:,3),[0;1;0],r.body(:,4), Z, r.R);
-            frontleg = 1;
-        end
-        
-%         plotRobot(r);
-        r = update(r);
-        
-        % Terrain compensation
-        if i < 200
-            % Front leg compensation with pitch/roll
-            legF = r.Ralpha'*r.R'*r.legs(:,frontleg);
-            legB = r.R'*r.legs(:,frontleg+2);
-            error = legF(3) - legB(3);
-            % Back leg compensation with body X-Z
-            leg = r.R'*r.legs(:,frontleg + 2);
-            errorBack = leg(3) + 0.15;
-            if ~r.c(frontleg+2)
-                if f(r.feet(1,frontleg+2),r.feet(2,frontleg+2), Z) < r.feet(3,frontleg+2)
-                    errorBack = -0.1;
-                else
-                    errorBack = 0.1;
-                end
-            end
-            leg2 = r.R'*r.legs(:,5-frontleg);
-            % Check for convergence
-            currError = max(abs(errorBack), abs(error));
-            if abs(lastError - currError) < 0.001 && r.c(frontleg+2) && r.c(frontleg)
-                break
-            end
-            lastError = currError;
-    
-            % Move
-            r = pitchRoll(r, -error*2, odd);
-            if (odd && leg2(1) > 0) || (~odd && leg2(1) < 0)
-                r = moveX(r, errorBack*2, odd);
-            end
-        end
-        if ~(r.c(frontleg) && r.c(frontleg+2))
-            fail = i;
-        end
-    end
-%     if count > 20
-%         fail
-%         count
-%     end
-    % Front leg extension
-    if ~r.c(frontleg)
-        [r.feet(:,frontleg), r.c(frontleg)] = extend(r.feet(:,frontleg),...
-            r.shoulders(:,frontleg), r.L2+r.L3, Z);
-        r = update(r);
-    end
-    
-    % Validate
-%     for i = 1:2
-%         leg = r.R'*r.legs(:,i);
-%         if norm(leg) > r.L2+r.L3
-%             norm(leg)
-%         end
-%     end
-end
-
-function r = step12DOF(r, odd, Z)
-    r.dof = [3 3 3 3];
-    r.heading = 2*r.centroid(1);
-    r.body = r.body + r.R*[0; r.dx*2; 0];
-    r = update(r);
-    headingVec = (r.shoulders(:,1) + r.shoulders(:,2) - r.shoulders(:,3) - r.shoulders(:,4))/2;  
-    heading = atan2(-headingVec(1), headingVec(2));
-    yawErr = max(-r.dyaw, min(r.dyaw, r.heading-heading));
-    r = yaw(r, yawErr, odd);
-    
-    % Lower feet
-    if odd
-        r.feet(:,2) = r.shoulders(:,2) + r.R*r.Ralpha*[r.L1; r.dx; 0];
-        r.feet(:,4) = r.shoulders(:,4) + r.R*[-r.L1; r.dx; 0];
-        [~, r.feet(:,2), r.c(2)] = contact(r.feet(:,2),[0;1;0],r.body(:,2), Z, r.R*r.Ralpha);
-        [~, r.feet(:,4), r.c(4)] = contact(r.feet(:,4),[0;1;0],r.body(:,5), Z, r.R);
-        frontleg = 2;
-    else
-        r.feet(:,1) = r.shoulders(:,1) + r.R*r.Ralpha*[-r.L1; r.dx; 0];
-        r.feet(:,3) = r.shoulders(:,3) + r.R*[r.L1; r.dx; 0];
-        [~, r.feet(:,1), r.c(1)] = contact(r.feet(:,1),[0;1;0],r.body(:,1), Z, r.R*r.Ralpha);
-        [~, r.feet(:,3), r.c(3)] = contact(r.feet(:,3),[0;1;0],r.body(:,4), Z, r.R);
-        frontleg = 1;
-    end
-    
-    lastError = 1000;
-    count = 0;
-    fail = 0;
-    
-    for i = 1:200
-        count = count + 1;
-        % Contact ground
-        if odd
-            r.feet(:,2) = r.shoulders(:,2) + r.R*r.Ralpha*[r.L1; r.dx; 0];
-            r.feet(:,4) = r.shoulders(:,4) + r.R*[-r.L1; r.dx; 0];
-            [~, r.feet(:,2), r.c(2)] = contact(r.feet(:,2),[0;1;0],r.body(:,2), Z, r.R*r.Ralpha);
-            [~, r.feet(:,4), r.c(4)] = contact(r.feet(:,4),[0;1;0],r.body(:,5), Z, r.R);
-        else
-            r.feet(:,1) = r.shoulders(:,1) + r.R*r.Ralpha*[-r.L1; r.dx; 0];
-            r.feet(:,3) = r.shoulders(:,3) + r.R*[r.L1; r.dx; 0];
-            [~, r.feet(:,1), r.c(1)] = contact(r.feet(:,1),[0;1;0],r.body(:,1), Z, r.R*r.Ralpha);
-            [~, r.feet(:,3), r.c(3)] = contact(r.feet(:,3),[0;1;0],r.body(:,4), Z, r.R);
-        end
-        r = update(r);
-        % Extend swing legs
-        for l = 1:4
-            if ~r.c(l)
-                [r.feet(:,l), r.c(l)] = extend(r.feet(:,l),...
-                    r.shoulders(:,l), r.L2+r.L3, Z);
-                r = update(r);
-            end
-        end
-%         plotRobot(r);
-        
-        % Terrain compensation
-        if i < 200
-            % Front leg compensation with pitch
-            legF = r.Ralpha'*r.R'*r.legs(:,frontleg);
-            legB = r.R'*r.legs(:,frontleg+2);
-            legF2 = r.Ralpha'*r.R'*r.legs(:,3-frontleg);
-            legB2 = r.R'*r.legs(:,5-frontleg);
-            error = legF(3) - legB(3);
-            % Back leg compensation with body Z
-            errorZ = (legF(3) + legB(3) + legF2(3) + legB2(3) + 0.6)/4;
-            % Check for convergence
-            currError = max(abs(errorZ), abs(error));
-            if abs(lastError - currError) < 0.001 && r.c(frontleg+2) && r.c(frontleg)
-                break
-            end
-            lastError = currError;
-    
-            % Move
-            r = pitchBody(r, -error*2);
-            r = moveBody(r, [0;0;errorZ]);
-        end
-        if ~(r.c(frontleg) && r.c(frontleg+2))
-            fail = i;
-        end
-    end
-    % Extend swing legs
-    for l = 1:4
-        if ~r.c(l)
-            [r.feet(:,l), r.c(l)] = extend(r.feet(:,l),...
-                r.shoulders(:,l), r.L2+r.L3, Z);
-            r = update(r);
-        end
-    end
-    if count > 20
-%         fail
-%         count
-    end
-end
-
 function r = solveStep(r, odd, Z, dof)
     r.dof = dof;
     r.heading = 2*r.centroid(1);
@@ -656,7 +472,7 @@ function r = solveStep(r, odd, Z, dof)
     end
     options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
         'Algorithm','interior-point','ConstraintTolerance',1e-4,...
-        'Display','notify-detailed');
+        'Display','notify','SpecifyObjectiveGradient',true);
     delta = [r.w; r.w; r.h];
     b1 = [r.L2+r.L3; r.L2+r.L3; Inf];
     b2 = [0; r.L2+r.L3; Inf];
@@ -687,8 +503,12 @@ function r = solveStep(r, odd, Z, dof)
     r = update(r);
 end
 
-function c = cost(x, r)
-    c = norm(r.centroid(1:2) - x(1:2));
+function [c,g] = cost(x, r)
+    d = r.centroid(1:2) - x(1:2);
+    c = max(norm(d),1e-12);
+    g = [d(1)/c;
+         d(2)/c;
+         0; 0;0;0; 0;0;0; 0;0;0; 0;0;0; 0;0;0; 0;0;0];
 end
 
 function [c,ceq] = constraints(x, r, odd)
@@ -881,7 +701,7 @@ function [F, Fnorm, Ftang, T] = quasiStaticDynamics(r, odd)
     end
     F(:,odd+1) = F1;
     F(:,odd+3) = F2;
-    
+
     % Decompose forces into components
     Fnorm = zeros(1,4);
     Ftang = zeros(1,4);
@@ -908,10 +728,10 @@ end
 % Compute forces on feet given displacement from CoM and gravity vector
 function [F1, F2, N3] = forces(r1, r2, r3, N, DIG, g)
     A = [eye(3), eye(3), N;
-         [cross(r1', [1 0 0]),  cross(r2', [1 0 0]);
-          cross(r1', [0 1 0]),  cross(r2', [0 1 0]);
-          cross(r1', [0 0 1]),  cross(r2', [0 0 1])], cross(N, r3);
-          1, zeros(1,6)];
+         0, r1(3), -r1(2), 0, r2(3), -r2(2), N(2)*r3(3) - N(3)*r3(2);
+         -r1(3), 0, r1(1), -r2(3), 0, r2(1), N(3)*r3(1) - N(1)*r3(3);
+         r1(2), -r1(1), 0, r2(2), -r2(1), 0, N(1)*r3(2) - N(2)*r3(1);
+         1 0 0 0 0 0 0];
     b = [-g;zeros(3,1);DIG];
     F = A\b;
     F1 = F(1:3);
