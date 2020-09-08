@@ -51,18 +51,18 @@
 global X Y Z dZdx dZdy FRAMES ANIMATE RECORD PLOT SIMULATE
 
 % GLOBAL FLAGS
-SIMULATE = ~~1; % flag to run new simulation instead of using existing data
-ANIMATE = ~~0; % flag to animate robot motion
-RECORD = ~~0; % flag to save animations as video files
+SIMULATE = ~~0; % flag to run new simulation instead of using existing data
+ANIMATE = ~~1; % flag to animate robot motion
+RECORD = ~~1; % flag to save animations as video files
 PLOT = ~~1; % flag to plot final robot condition and path
 
 % SIMULATION PARAMETERS
-SCORES = {'Success Rate'}; % output variable names
+SCORES = {'Normal', 'Tangential'}; % output variable names
 CONFIG_NAMES = {'8-DoF', '9-DoF', '10-DoF', '11-DoF', '12-DoF'}; % configuration names
 COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
-SWEEP = 0:0.1:1; % values for parameter being swept
-SAMPLES = 10; % number of duplicate samples to average at each value
-STEPS = 18; % number of robot steps to simulate per trial
+SWEEP = 0; % values for parameter being swept
+SAMPLES = 1; % number of duplicate samples to average at each value
+STEPS = 20; % number of robot steps to simulate per trial
 TIME_STEP = 0.25; % delay between frame updates for animation
 DISCARD_FAILS = 0; % aborts iteration for all configs if any one fails
 
@@ -71,10 +71,10 @@ quads = {[2,2,2,2], [2,3,2,2], [3,3,2,2], [3,3,3,2], [3,3,3,3]};
 CONFIGURATIONS = cell(size(quads));
 for iConfig = 1:length(quads)
     CONFIGURATIONS{iConfig} = quadruped(quads{iConfig}, ...
-        0.1, 0.3, {.2, [.16, .16]}, 1);
+        0.1, 0.3, {.2, [.16, .16]}, 0);
 end
 hex20 = hexapod(0.1, 0.3, .16);
-% CONFIGURATIONS = {hex20};
+CONFIGURATIONS = CONFIGURATIONS(5);
 
 % SET VIEW WINDOW SIZE
 close all;
@@ -156,19 +156,18 @@ for iter = 1:size(rawScores,1)
             normalForce = zeros(1,STEPS);
             tangentForce = zeros(1,STEPS);
             torque = zeros(1,STEPS);
-%             for i = 1:STEPS
-%                 robot = robots{iter, iConfig}(i+1);
-%                 odd = mod(i,2);
-%                 [F, Fnorm, Ftang, T] = quasiStaticDynamics(robot, odd);
-%                 normalForce(i) = max([Fnorm, 0]);
-%                 tangentForce(i) = max(Ftang);
+            for i = 1:STEPS
+                robot = robots{iter, iConfig}(i+1);
+                [F, Fnorm, Ftang] = quasiStaticDynamics3(robot, i)
+                normalForce(i) = max([Fnorm, 0]);
+                tangentForce(i) = max(Ftang);
 %                 torque(i) = max(vecnorm(T));
 %                 if norm(F(:,odd+1))+norm(F(:,odd+3)) > 100
 %                     normalForce(i) = NaN;
 %                     tangentForce(i) = NaN;
 %                     torque(i) = NaN; 
 %                 end
-%             end
+            end
             robot = robots{iter, iConfig}(end);
             ratio = normalForce./tangentForce;
             ratio(ratio>2) = NaN;
@@ -178,10 +177,10 @@ for iter = 1:size(rawScores,1)
             pathLength = sum(vecnorm(diff(path, 1, 2)));
             
             % RECORD SCORES
-            rawScores(iter, iConfig) = ~robot.fail;
+%             rawScores(iter, iConfig) = ~robot.fail;
 %             rawScores(iter, iConfig) = distance/pathLength;
-%             rawScores(iter, iConfig, 1) = mean(normalForce, 'omitnan');
-%             rawScores(iter, iConfig, 2) = mean(tangentForce, 'omitnan');
+            rawScores(iter, iConfig, 1) = mean(normalForce, 'omitnan');
+            rawScores(iter, iConfig, 2) = mean(tangentForce, 'omitnan');
 %             rawScores(iter, iConfig, 3) = mean(torque, 'omitnan');
 %             rawScores(iter, iConfig, 4) = ratio;
             
@@ -200,7 +199,7 @@ for iter = 1:size(rawScores,1)
                 end
                 plotTerrain();
                 plotRobot(robots{iter, iConfig}(end));
-%                 plotForces(robot, F, 'g', 0.016);
+                plotForces(robot, F, STEPS, 'g', 0.016);
 %                 plotTorques(robot, T, 'c', 0.1);
                 plot3(path(1,:), -path(3,:), path(2,:),'k','linewidth', 2);
                 title(CONFIG_NAMES{iConfig});
@@ -340,13 +339,15 @@ function plotRobot(r)
     end
 end
 
-function plotForces(robot, F, color, scale)
+function plotForces(robot, F, count, color, scale)
+    i = mod(count, size(robot.gait.angles, 2))+1;
+    feet = robot.vertices(:, robot.gait.feet(:,i) > 0);
     for i = 1:size(F, 2)-1
-        foot = robot.feet(:, i);
+        foot = feet(:, i);
         quiver3(foot(1), -foot(3), foot(2), F(1, i)*scale, ...
             -F(3, i)*scale, F(2, i)*scale, color, 'linewidth', 2);
     end
-    c = robot.centroid;
+    c = robot.origin;
     quiver3(c(1), -c(3), c(2), F(1, end)*scale, -F(3, end)*scale, ...
         F(2, end)*scale, color, 'linewidth', 2);
 end
@@ -535,6 +536,9 @@ function r = step(r0, count)
     r0.angles = r0.gait.angles(:, i);
     
     X0 = robot2state(r0);
+    
+%     r = state2robot(X0, r0.config);r.fail=0;return;
+    
     Aeq = [zeros(1,3), X0(7:9)', zeros(1,length(X0)-6)];
     beq = 0;
     options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
@@ -549,7 +553,20 @@ function r = step(r0, count)
     r = state2robot(x, r0.config);
     r.fail = count>0 && output.constrviolation > options.ConstraintTolerance;
     if r.fail
-        fprintf('Failed! %s\n', output);
+        disp(output.message);
+    else
+        options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
+        'Algorithm','sqp','ConstraintTolerance',1e-4,...
+        'Display','iter','SpecifyObjectiveGradient',false);
+        delta = 0;
+        lb(1:2) = r.origin(1:2)-delta;
+        ub(1:2) = r.origin(1:2)+delta;
+         [x,~,~,output] = fmincon(@(x)costForce(x,r0,i),x,[],[],Aeq,beq,lb,ub,@(x)constraints(x,r0,i,count>0),options);
+        output
+        if output.constrviolation < options.ConstraintTolerance
+            r = state2robot(x, r0.config);
+            r.fail = 0;
+        end
     end
 %     output.constrviolation
 %     [cFinal,ceqFinal] = constraints(x, r, i, count>0)
@@ -557,12 +574,21 @@ function r = step(r0, count)
 %     linearFinal = Aeq*x - beq
 end
 
-function [c,g] = cost(x, r0, i)
+function [c, g] = cost(x, r0, ~)
     d = r0.origin(1:2) - x(1:2);
     c = max(norm(d),1e-12);
     g = [d(1)/c;
          d(2)/c;
          zeros(length(x)-2,1)];
+%     r = state2robot(x, r0.config);
+%     [F, Fnorm, Ftang] = quasiStaticDynamics3(r, i);
+% %     c = norm(d) + sum(sum(F.*F))/1000;
+end
+
+function c = costForce(x, r0, i)
+    r = state2robot(x, r0.config);
+    [F, Fnorm, Ftang] = quasiStaticDynamics3(r, i);
+    c = sum(sum(F.*F));
 end
 
 function [c,ceq] = constraints(x, r0, i, stepping)
@@ -586,6 +612,60 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % QUASI-STATIC DYNAMICS
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% Find forces at [feet, centroid] and torques at [shoulder 1, knee 1, ...]
+function [F, Fnorm, Ftang] = quasiStaticDynamics3(robot, count)
+    global dZdx dZdy
+    
+    GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
+    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
+    
+    i = mod(count, size(robot.gait.angles, 2))+1;
+    feet = robot.vertices(:, robot.gait.feet(:,i) > 0);
+    r = feet - robot.origin;
+    
+    % Find normal vectors
+    N = zeros(3,size(feet, 2));
+    for iFoot = 1:size(feet, 2)
+        foot = feet(:,iFoot);
+        N(:,iFoot) = [-f(foot(1),foot(2),dZdx);...
+                       -f(foot(1),foot(2),dZdy); 1];
+        N(:,iFoot) = N(:,iFoot)/norm(N(:,iFoot));
+    end
+    
+    % Find contact forces
+    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
+    
+    Aeq_torque = zeros(3,3*size(feet,2));
+    for iFoot = 1:size(feet,2)
+        ri = r(:,iFoot);
+        Aeq_torque(:,iFoot*3-2:iFoot*3) = [0, ri(3), -ri(2);
+                                           -ri(3), 0, ri(1);
+                                           ri(2), -ri(1), 0];
+    end
+%     dig = [1;0;0; 0;0;0; 0;0;0]';
+    Aeq = [repmat(eye(3), 1, size(feet,2)); Aeq_torque];
+    beq = [-G;zeros(3,1)];
+    A = [];
+    b = [];
+    H = eye(3*size(feet,2));
+    h = zeros(size(H,1), 1);
+%     h = reshape(N, [], 1);
+    options = optimoptions('quadprog','Display','off');
+    [Fvec,~,~,~] = quadprog(H,h,A,b,Aeq,beq,[],[],[],options);
+
+    F = [reshape(Fvec, 3, []), G];
+    
+    
+    % Decompose forces into components
+    Fnorm = zeros(1,size(feet,2));
+    Ftang = zeros(1,size(feet,2));
+    for iFoot = 1:size(feet,2)
+        Fnorm(iFoot) = -F(:,iFoot)'*N(:,iFoot);
+        Ftang(iFoot) = norm(cross(F(:,iFoot),N(:,iFoot)));
+    end
+end
 
 % Find forces at [feet, centroid] and torques at [shoulder 1, knee 1, ...]
 function [F, Fnorm, Ftang, T] = quasiStaticDynamics(r, odd)
@@ -696,19 +776,23 @@ function config = quadruped(dof, w, h, L, trot)
     config.iBodies = 0; % indices of joint for each body segment
     config.joints = zeros(3, 3, sum(config.count));
     config.limits = zeros(sum(config.count), 2); % angle limits
+    config.gait.dyaw = deg2rad(5); % gait max yaw correction per step
     if trot
         config.gait.angles = zeros(sum(config.count), 2); % gait states
-        config.gait.feet = zeros(4, 2); % gait foot contacts
+        config.gait.feet = zeros(sum(config.count), 2); % foot contacts
         config.gait.dx = [0 0; 0.1 0.1; 0 0]; % gait centroid motion
-        config.gait.dyaw = deg2rad(5); % gait max yaw correction per step
     else
-        
+        config.gait.angles = zeros(sum(config.count), 4); % gait states
+        config.gait.feet = zeros(sum(config.count), 4); % foot contacts
+        config.gait.dx = 0.05*[0 0 0 0; 1 1 1 1; 0 0 0 0];
     end
     x = [1;0;0]; % right
     y = [0;1;0]; % forward
     z = [0;0;1]; % up
     gait = [-1, 1, -1, 1]*40;
     feet = [1, 0, 1, 0];
+    feet2 = [1 3 2 4];
+    gait2 = [3/4, 1/4, -1/4, -3/4]*40;
     for iLeg = 1:4
         iJoint = sum(dof(1:iLeg-1))+1;
         config.joints(:,1,iJoint) = config.bodies{1}(:,iLeg); % shoulder
@@ -716,25 +800,28 @@ function config = quadruped(dof, w, h, L, trot)
         config.joints(:,2,iJoint+1) = y; % shoulder roll axis
         config.joints(:,3,iJoint+1) = x*L{dof(iLeg)-1}(1); % link 1
         config.limits(iJoint:iJoint+1,:) = [-60, 60; -45, 90];
+        config.gait.angles(iJoint+1,:) = 45;
         if trot
-            config.gait.angles(iJoint,:) = [gait(iLeg), -gait(iLeg)]*.75;
-            config.gait.angles(iJoint+1,:) = [45, 45];
+            config.gait.angles(iJoint,:) = [gait(iLeg), -gait(iLeg)];
             config.gait.feet(iJoint+1,:) = [feet(iLeg), ~feet(iLeg)];
         else
-            
+            config.gait.angles(iJoint, :) = circshift(gait2, feet2(iLeg)-1);
+            config.gait.feet(iJoint+1,:) = iLeg~=feet2;
         end
         if dof(iLeg) == 3
             config.joints(:,2,iJoint+2) = y; % elbow roll axis
             config.joints(:,3,iJoint+2) = x*L{dof(iLeg)-1}(2); % link 2
             config.limits(iJoint+1, :) = [-90, 45];
             config.limits(iJoint+2, :) = [0, 135];
+            config.gait.feet(iJoint+1,:) = 0;
+            config.gait.angles(iJoint+1,:) = -30;
+            config.gait.angles(iJoint+2,:) = 90;
             if trot
-                config.gait.feet(iJoint+1,:) = [0, 0];
-                config.gait.feet(iJoint+2,:) = [feet(iLeg); ~feet(iLeg)];
                 config.gait.angles(iJoint,:) = [gait(iLeg), -gait(iLeg)];
-                config.gait.angles(iJoint+1:iJoint+2,:) = [-30, -30; 90, 90];
+                config.gait.feet(iJoint+2,:) = [feet(iLeg); ~feet(iLeg)];
             else
-                
+                config.gait.angles(iJoint, :) = circshift(gait2, feet2(iLeg)-1);
+                config.gait.feet(iJoint+2,:) = iLeg~=feet2;
             end
         end
         config.gait.feet = logical(config.gait.feet);
