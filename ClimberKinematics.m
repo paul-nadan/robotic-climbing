@@ -48,33 +48,34 @@
 %       dyaw = maximum yaw correction per step (radians)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-global X Y Z dZdx dZdy FRAMES ANIMATE RECORD PLOT SIMULATE
+global X Y Z dZdx dZdy OBSTACLES FRAMES ANIMATE RECORD PLOT SIMULATE
 
 % GLOBAL FLAGS
-SIMULATE = ~~0; % flag to run new simulation instead of using existing data
+SIMULATE = ~~1; % flag to run new simulation instead of using existing data
 ANIMATE = ~~1; % flag to animate robot motion
-RECORD = ~~1; % flag to save animations as video files
+RECORD = ~~0; % flag to save animations as video files
 PLOT = ~~1; % flag to plot final robot condition and path
 
 % SIMULATION PARAMETERS
-SCORES = {'Normal', 'Tangential'}; % output variable names
+SCORES = {'Normal', 'Tangential', 'Torque', 'Delta y'}; % output variable names
 CONFIG_NAMES = {'8-DoF', '9-DoF', '10-DoF', '11-DoF', '12-DoF'}; % configuration names
 COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
-SWEEP = 0; % values for parameter being swept
+SWEEP = 1; % values for parameter being swept
 SAMPLES = 1; % number of duplicate samples to average at each value
-STEPS = 20; % number of robot steps to simulate per trial
+STEPS = 30; % number of robot steps to simulate per trial
 TIME_STEP = 0.25; % delay between frame updates for animation
 DISCARD_FAILS = 0; % aborts iteration for all configs if any one fails
+HORIZON = 2; % number of steps solver should model (min 1)
 
 % ROBOT CONFIGURATIONS
 quads = {[2,2,2,2], [2,3,2,2], [3,3,2,2], [3,3,3,2], [3,3,3,3]};
 CONFIGURATIONS = cell(size(quads));
 for iConfig = 1:length(quads)
     CONFIGURATIONS{iConfig} = quadruped(quads{iConfig}, ...
-        0.1, 0.3, {.2, [.16, .16]}, 0);
+        0.1, 0.3, {.2, [.16, .16]}, 0, HORIZON);
 end
-hex20 = hexapod(0.1, 0.3, .16);
-CONFIGURATIONS = CONFIGURATIONS(5);
+hex20 = hexapod(0.1, 0.3, .16, HORIZON);
+CONFIGURATIONS = {CONFIGURATIONS{3}};
 
 % SET VIEW WINDOW SIZE
 close all;
@@ -101,8 +102,8 @@ for iter = 1:size(rawScores,1)
 
     % GENERATE TERRAIN
     if SIMULATE
-        [X, Y, Z, dZdx, dZdy] = terrain([-1.5, 1.5], [-1.5 3.5], .02, ...
-            [1,1,0.5]*sweep, [1, .25, 0.0625], 0);
+        [X, Y, Z, dZdx, dZdy, OBSTACLES] = terrain([-1.5, 1.5], ...
+            [-1.5 3.5], .02, [1,1,0.5]*sweep, [1, .25, 0.0625], 0);
     end
     
     % INITIALIZE ROBOT
@@ -110,7 +111,7 @@ for iter = 1:size(rawScores,1)
         if ~SIMULATE
             break
         end
-        robot = spawnRobot([0;-0.8;0], eye(3), CONFIGURATIONS{iConfig});
+        robot = spawnRobot([0;-.75;0], eye(3), CONFIGURATIONS{iConfig});
         robots{iter, iConfig} = repmat(robot, STEPS + 1, 1);
     end
     
@@ -158,10 +159,10 @@ for iter = 1:size(rawScores,1)
             torque = zeros(1,STEPS);
             for i = 1:STEPS
                 robot = robots{iter, iConfig}(i+1);
-                [F, Fnorm, Ftang] = quasiStaticDynamics3(robot, i)
+                [F, Fnorm, Ftang, T] = quasiStaticDynamics(robot, i);
                 normalForce(i) = max([Fnorm, 0]);
                 tangentForce(i) = max(Ftang);
-%                 torque(i) = max(vecnorm(T));
+                torque(i) = max(vecnorm(T));
 %                 if norm(F(:,odd+1))+norm(F(:,odd+3)) > 100
 %                     normalForce(i) = NaN;
 %                     tangentForce(i) = NaN;
@@ -181,7 +182,8 @@ for iter = 1:size(rawScores,1)
 %             rawScores(iter, iConfig) = distance/pathLength;
             rawScores(iter, iConfig, 1) = mean(normalForce, 'omitnan');
             rawScores(iter, iConfig, 2) = mean(tangentForce, 'omitnan');
-%             rawScores(iter, iConfig, 3) = mean(torque, 'omitnan');
+            rawScores(iter, iConfig, 3) = mean(torque, 'omitnan');
+            rawScores(iter, iConfig, 4) = robot.origin(2)+.75;
 %             rawScores(iter, iConfig, 4) = ratio;
             
             % Ignore individual failed samples
@@ -200,7 +202,7 @@ for iter = 1:size(rawScores,1)
                 plotTerrain();
                 plotRobot(robots{iter, iConfig}(end));
                 plotForces(robot, F, STEPS, 'g', 0.016);
-%                 plotTorques(robot, T, 'c', 0.1);
+                plotTorques(robot, T, 'c', 0.1);
                 plot3(path(1,:), -path(3,:), path(2,:),'k','linewidth', 2);
                 title(CONFIG_NAMES{iConfig});
                 drawnow();
@@ -258,7 +260,7 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Generates random terrain composed of planar segments
-function [xq, yq, zq, dzdx, dzdy] = terrain(x, y, res, slope, roughness, corner)
+function [xq, yq, zq, dzdx, dzdy, obstacles] = terrain(x, y, res, slope, roughness, corner)
     % Fine height grid
     [xq,yq] = meshgrid(x(1):res:x(2), y(1):res:y(2));
     zq = zeros(size(xq));
@@ -270,6 +272,7 @@ function [xq, yq, zq, dzdx, dzdy] = terrain(x, y, res, slope, roughness, corner)
     end
     
     zq = zq + corner*yq.*(yq>0) - corner*yq.*(yq<0);
+    obstacles = [];%[[-Inf, Inf; 0, 0.2; -Inf, 0.4],[-Inf, Inf; -0.2, 0; -Inf, 0.25],[-Inf, Inf; 0.2, 0.4; -Inf, 0.25]];
     
     % Slopes
     dzdy = diff(zq)/res;
@@ -310,14 +313,33 @@ function z = f(x, y, Z)
     z = y1.*(1-yp) + y2.*yp;
 end
 
+% Returns distance to nearest collision with terrain
+function distance = contact(X)
+    global Z OBSTACLES
+    gDist = (X(3,:)-f(X(1,:), X(2,:), Z))';
+    distance = gDist;
+    for i = 1:size(OBSTACLES, 2)/2
+        obstacle = OBSTACLES(:, 2*i-1:2*i);
+        oDist = max(max(obstacle(:,1) - X(:,:), X(:,:) - obstacle(:,2)))';
+        distance = min(distance, oDist);
+    end
+end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % VISUALIZATION FUNCTIONS
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 function plotTerrain()
-    global X Y Z
+    global X Y Z OBSTACLES
     cla();
-    mesh(X,-Z,Y);
+    zq = Z;
+    for i = 1:size(OBSTACLES, 2)/2
+        obstacle = OBSTACLES(:, 2*i-1:2*i);
+        iObstacle = (X>=obstacle(1,1)&X<=obstacle(1,2))&...
+            (Y>=obstacle(2,1)&Y<=obstacle(2,2));
+        zq(iObstacle) = obstacle(3,2);
+    end
+    mesh(X,-zq,Y);
     hold on
     axis equal
 end
@@ -353,21 +375,11 @@ function plotForces(robot, F, count, color, scale)
 end
 
 function plotTorques(robot, T, color, scale)
-    for iF = 1:size(robot.feet, 2)
-        iJ = sum(robot.dof(1:iF-1)-1);
-        if robot.dof(iF) == 3
-            knee = getKnee(robot.shoulders(:,iF),...
-                robot.feet(:,iF), robot.L2, robot.L3, robot.R);
-            quiver3(robot.shoulders(1,iF), -robot.shoulders(3,iF),...
-                robot.shoulders(2,iF), T(1,iJ+1)*scale, ...
-                -T(3,iJ+1)*scale, T(2,iJ+1)*scale, color, 'linewidth', 2);
-            quiver3(knee(1), -knee(3), knee(2), T(1,iJ+2)*scale, ...
-                -T(3,iJ+2)*scale, T(2,iJ+2)*scale, color, 'linewidth', 2);
-        else
-            quiver3(robot.shoulders(1,iF), -robot.shoulders(3,iF),...
-                robot.shoulders(2,iF), T(1,iJ+1)*scale, ...
-                -T(3,iJ+1)*scale, T(2,iJ+1)*scale, color, 'linewidth', 2);
-        end
+    joints = robot.vertices - robot.links;
+    for i = 1:size(T, 2)-1
+        joint = joints(:, i);
+        quiver3(joint(1), -joint(3), joint(2), T(1, i)*scale, ...
+            -T(3, i)*scale, T(2, i)*scale, color, 'linewidth', 2);
     end
 end
 
@@ -395,7 +407,6 @@ function animateStep(r1, r2, dt, count, window)
     dVertices = r2.vertices - r1.vertices;
     plotTerrain();
     plotPoints(r1.vertices(:,r1.gait.feet(:,i)>0), 'b.');
-%     plotPoints(r1.feet(:,~r1.c&p), 'r.');
     for t = 0:dt:1
         for iBody = 1:length(r1.bodies)
             body = r1.bodies{iBody}+t*dBody{iBody};
@@ -525,53 +536,82 @@ end
 % KINEMATIC SOLVER FUNCTIONS
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-function r = step(r0, count)
+function r = step(r0, count0)
+    horizon = r0.gait.horizon;
+    count = count0:count0+horizon-1;
     i = mod(count-1, size(r0.gait.angles, 2))+1;
     targetHeading = 2*r0.origin(1);
     headingVec = r0.R0(:,2);
     heading = atan2(-headingVec(1), headingVec(2));
     yawErr = max(-r0.gait.dyaw, min(r0.gait.dyaw, targetHeading-heading));
-    r0.origin = r0.origin + r0.R0*r0.gait.dx(:,i);
     r0.R0 = vrrotvec2mat([0 0 1 yawErr])*r0.R0;
-    r0.angles = r0.gait.angles(:, i);
+    rd = repmat(r0, horizon+1, 1);
+    X0 = robot2state(rd(2));
+    Xn = zeros(length(X0)*horizon, 1);
+    Aeq = zeros(horizon, length(Xn));
+    delta = norm(r0.gait.dx(1:2,i));
+    lb = repmat([r0.origin(1:2)-delta;-Inf;-1;-1;-1;-1;-1;-1;r0.config.limits(:,1)], horizon, 1);
+    ub = repmat([r0.origin(1:2)+delta;Inf;1;1;1;1;1;1;r0.config.limits(:,2)], horizon, 1);
+    for iStep = 1:horizon
+        rd(iStep+1).origin = rd(iStep).origin + rd(iStep).R0*r0.gait.dx(:,i(iStep));
+        rd(iStep+1).angles = r0.gait.angles(:,i(iStep));
+        ix0 = length(X0)*(iStep-1);
+        Xn(ix0+1:ix0+length(X0)) = robot2state(rd(iStep+1));
+        Aeq(iStep, (iStep-1)*length(X0)+4:(iStep-1)*length(X0)+6) = X0(7:9)';
+        lb(ix0+1:ix0+2) = rd(iStep+1).origin(1:2)-delta;
+        ub(ix0+1:ix0+2) = rd(iStep+1).origin(1:2)+delta;
+    end
     
-    X0 = robot2state(r0);
-    
-%     r = state2robot(X0, r0.config);r.fail=0;return;
-    
-    Aeq = [zeros(1,3), X0(7:9)', zeros(1,length(X0)-6)];
-    beq = 0;
+    beq = zeros(horizon, 1);
     options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
         'Algorithm','sqp','ConstraintTolerance',1e-4,...
-        'Display','off','SpecifyObjectiveGradient',true);
-    delta = norm(r0.gait.dx(1:2,i));
-    lb = [r0.origin(1:2)-delta;-Inf;-1;-1;-1;-1;-1;-1;r0.config.limits(:,1)];
-    ub = [r0.origin(1:2)+delta;Inf;1;1;1;1;1;1;r0.config.limits(:,2)];
+        'Display','iter','SpecifyObjectiveGradient',false);
+    [x,~,~,output] = fmincon(@(x)costLookAhead(x,rd,i),Xn,[],[],...
+        Aeq,beq,lb,ub,@(x)constraintsLookAhead(x,rd,i,count0>0),options);
     
-    [x,~,~,output] = fmincon(@(x)cost(x,r0,i),X0,[],[],Aeq,beq,lb,ub,@(x)constraints(x,r0,i,count>0),options);
-    
-    r = state2robot(x, r0.config);
-    r.fail = count>0 && output.constrviolation > options.ConstraintTolerance;
+    r = state2robot(x(1:length(X0)), r0.config);
+    r.fail = count0>0&&output.constrviolation > options.ConstraintTolerance;
     if r.fail
         disp(output.message);
-    else
-        options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
-        'Algorithm','sqp','ConstraintTolerance',1e-4,...
-        'Display','iter','SpecifyObjectiveGradient',false);
-        delta = 0;
-        lb(1:2) = r.origin(1:2)-delta;
-        ub(1:2) = r.origin(1:2)+delta;
-         [x,~,~,output] = fmincon(@(x)costForce(x,r0,i),x,[],[],Aeq,beq,lb,ub,@(x)constraints(x,r0,i,count>0),options);
-        output
-        if output.constrviolation < options.ConstraintTolerance
-            r = state2robot(x, r0.config);
-            r.fail = 0;
+        if horizon > 1
+            fprintf('Trying shorter horizon: %d\n', horizon-1);
+            r0.gait.horizon = r0.gait.horizon - 1;
+            r = step(r0, count0);
+            r.gait.horizion = horizon;
         end
+    else
+%         options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
+%         'Algorithm','sqp','ConstraintTolerance',1e-4,...
+%         'Display','off','SpecifyObjectiveGradient',false);
+% %         delta = 0;
+% %         lb(1:2) = r.origin(1:2)-delta;
+% %         ub(1:2) = r.origin(1:2)+delta;
+%         [x,~,~,output] = fmincon(@(x)costLookAhead(x,rd,i),x,[],[],...
+%         Aeq,beq,lb,ub,@(x)constraintsLookAhead(x,rd,i,count0>0),options);
+%     
+%         output
+%         if output.constrviolation < options.ConstraintTolerance
+%             r = state2robot(x(1:length(X0)), r0.config);
+%             r.fail = 0;
+%         end
     end
-%     output.constrviolation
-%     [cFinal,ceqFinal] = constraints(x, r, i, count>0)
-%     costFinal = cost(x, r)
-%     linearFinal = Aeq*x - beq
+end
+
+function [c, g] = costLookAhead(x, rd, i)
+    Nx = length(x)/(length(rd)-1);
+    g = zeros(length(x), 1);
+    c = 0;
+    
+    cf = costForce(x(1:Nx), rd(2), i(1))*1e-6;
+    [c, g] = cost(x, rd(2), i(1));
+    c = cf;
+    
+%     for iStep = 1:length(rd)-1
+%         [cn, gn] = cost(x(Nx*(iStep-1)+1:Nx*iStep), rd(iStep+1), i(iStep));
+%         g(length(gn)*(iStep-1)+1:length(gn)*iStep) = gn;
+%         c = c + cn;
+%     end
+%     c = c/(length(rd)-1);
 end
 
 function [c, g] = cost(x, r0, ~)
@@ -580,19 +620,30 @@ function [c, g] = cost(x, r0, ~)
     g = [d(1)/c;
          d(2)/c;
          zeros(length(x)-2,1)];
-%     r = state2robot(x, r0.config);
-%     [F, Fnorm, Ftang] = quasiStaticDynamics3(r, i);
-% %     c = norm(d) + sum(sum(F.*F))/1000;
 end
 
 function c = costForce(x, r0, i)
     r = state2robot(x, r0.config);
-    [F, Fnorm, Ftang] = quasiStaticDynamics3(r, i);
+    [F, Fnorm, Ftang] = quasiStaticDynamics(r, i);
     c = sum(sum(F.*F));
 end
 
+function [c,ceq] = constraintsLookAhead(x, rd, i, stepping)
+    Nx = length(x)/(length(rd)-1);
+    [c1,ceq1] = constraints(x(1:Nx), rd(2), i(1), stepping);
+    ceq = zeros(length(ceq1)*length(rd)-1, 1);
+    c = zeros(length(c1)*length(rd)-1, 1);
+    ceq(1:length(ceq1)) = ceq1;
+    c(1:length(c1)) = c1;
+    for iStep = 2:length(rd)-1
+        r = state2robot(x(Nx*(iStep-2)+1:Nx*(iStep-1)), rd(1).config);
+        [cn,ceqn] = constraints(x(Nx*(iStep-1)+1:Nx*iStep), r, i(iStep-1), 1);
+        ceq(length(ceqn)*(iStep-1)+1:length(ceqn)*iStep) = ceqn;
+        c(length(cn)*(iStep-1)+1:length(cn)*iStep) = cn;
+    end
+end
+
 function [c,ceq] = constraints(x, r0, i, stepping)
-    global Z
     r = state2robot(x, r0.config);
     allFeet = r.vertices(:, sum(r0.gait.feet, 2) > 0);
     stanceFeet = r.vertices(:, r0.gait.feet(:,i) > 0);
@@ -600,13 +651,13 @@ function [c,ceq] = constraints(x, r0, i, stepping)
     ceq = [x(4:6)'*x(7:9);
            norm(x(4:6))-1;
            norm(x(7:9))-1;
-           (allFeet(3,:)-f(allFeet(1,:), allFeet(2,:), Z))';
+           contact(allFeet);
            stepping*(stanceFeet(1,:)-fixedFeet(1,:))';
            stepping*(stanceFeet(2,:)-fixedFeet(2,:))'];
     body = [r.bodies{:}];
-    dz = r0.config.clearance + f(body(1, :), body(2, :), Z) - body(3, :);
+    dz = -contact(body) + r0.config.clearance;
     B = cross(x(4:6), x(7:9));
-    c = [dz'; -B(3)];
+    c = [dz; -B(3)];
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -615,7 +666,7 @@ end
 
 
 % Find forces at [feet, centroid] and torques at [shoulder 1, knee 1, ...]
-function [F, Fnorm, Ftang] = quasiStaticDynamics3(robot, count)
+function [F, Fnorm, Ftang, T] = quasiStaticDynamics(robot, count)
     global dZdx dZdy
     
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
@@ -636,7 +687,6 @@ function [F, Fnorm, Ftang] = quasiStaticDynamics3(robot, count)
     
     % Find contact forces
     G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
-    
     Aeq_torque = zeros(3,3*size(feet,2));
     for iFoot = 1:size(feet,2)
         ri = r(:,iFoot);
@@ -644,7 +694,6 @@ function [F, Fnorm, Ftang] = quasiStaticDynamics3(robot, count)
                                            -ri(3), 0, ri(1);
                                            ri(2), -ri(1), 0];
     end
-%     dig = [1;0;0; 0;0;0; 0;0;0]';
     Aeq = [repmat(eye(3), 1, size(feet,2)); Aeq_torque];
     beq = [-G;zeros(3,1)];
     A = [];
@@ -654,9 +703,7 @@ function [F, Fnorm, Ftang] = quasiStaticDynamics3(robot, count)
 %     h = reshape(N, [], 1);
     options = optimoptions('quadprog','Display','off');
     [Fvec,~,~,~] = quadprog(H,h,A,b,Aeq,beq,[],[],[],options);
-
     F = [reshape(Fvec, 3, []), G];
-    
     
     % Decompose forces into components
     Fnorm = zeros(1,size(feet,2));
@@ -665,91 +712,20 @@ function [F, Fnorm, Ftang] = quasiStaticDynamics3(robot, count)
         Fnorm(iFoot) = -F(:,iFoot)'*N(:,iFoot);
         Ftang(iFoot) = norm(cross(F(:,iFoot),N(:,iFoot)));
     end
-end
-
-% Find forces at [feet, centroid] and torques at [shoulder 1, knee 1, ...]
-function [F, Fnorm, Ftang, T] = quasiStaticDynamics(r, odd)
-    global dZdx dZdy
-    
-    GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
-    DIG_FORCE = 0; % Magnitude of max directed inward grasping force (N)
-    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
-    
-    % Find normal vectors
-    fvec = zeros(3,4);
-    feet = r.vertices(:,sum(r.gait.feet,2)>0);
-    for iFoot = 1:size(fvec, 2)
-        foot = feet(:,iFoot);
-        fvec(:,iFoot) = [-f(foot(1),foot(2),dZdx);...
-                       -f(foot(1),foot(2),dZdy); 1];
-        fvec(:,iFoot) = fvec(:,iFoot)/norm(fvec(:,iFoot));
-    end
-    
-    % Find contact forces
-    footFront = feet(:,odd+1) - r.origin;
-    footBack = feet(:,odd+3) - r.origin;
-    footBack2 = feet(:,4-odd) - r.origin;
-    dig = DIG_FORCE*max(0,-cosd(GRAVITY_ANGLE))*(~odd-odd);
-    grav = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
-    nvec = fvec(:,4-odd);
-    [F1, F2, N3] = forces(footFront, footBack, footBack2, ...
-        nvec, dig, grav);
-    F = zeros(3,5);
-    F(:,4-odd) = N3;
-    F(:,5) = grav;
-    if N3'*[0;0;-1] > 0
-        footFront2 = r.feet(:,2-odd) - r.origin;
-        nvec = fvec(:,2-odd);
-        [F1, F2, N3] = forces(footFront, footBack, footFront2, ...
-            nvec, dig, grav);
-        F(:,4-odd) = 0;
-        F(:,2-odd) = N3;
-    end
-    F(:,odd+1) = F1;
-    F(:,odd+3) = F2;
-
-    % Decompose forces into components
-    Fnorm = zeros(1,4);
-    Ftang = zeros(1,4);
-    for iFoot = 1:size(fvec, 2)
-        Fnorm(iFoot) = -F(:,iFoot)'*fvec(:,iFoot);
-        Ftang(iFoot) = norm(cross(F(:,iFoot),fvec(:,iFoot)));
-    end
     
     % Compute torques
-    T = zeros(3, sum(r.dof-1));
-    for iFoot = 1:size(r.feet, 2)
-        iJoint = sum(r.dof(1:iFoot-1)-1);
-        if r.dof(iFoot) == 3
-            knee = getKnee(r.shoulders(:,iFoot),...
-                r.feet(:,iFoot), r.L2, r.L3, r.R);
-            T(:,iJoint+1:iJoint+2) = torques([r.legs(:,iFoot), ...
-                r.feet(:,iFoot)-knee], [F(:,iFoot), F(:,iFoot)]);
-        else
-            T(:,iJoint+1) = torques(r.legs(:,iFoot), F(:,iFoot));
+    joints = robot.vertices - robot.links;
+    T = zeros(size(joints));
+    for iJoint = 1:size(robot.vertices, 2)
+        nChildren = find([robot.config.parents(iJoint+1:end),0]<iJoint, 1);
+        iChildren = iJoint:iJoint+nChildren-1;
+        iFeetBool = double(robot.gait.feet(:,i)' > 0);
+        iFeetBool(iChildren) = -iFeetBool(iChildren);
+        iFeet = find(iFeetBool(iFeetBool~=0) < 0);
+        for iFoot = iFeet
+            rFoot = feet(:,iFoot)-joints(:,iJoint);
+            T(:, iJoint) = T(:, iJoint) + cross(rFoot, F(:,iFoot));
         end
-    end
-end
-
-% Compute forces on feet given displacement from CoM and gravity vector
-function [F1, F2, N3] = forces(r1, r2, r3, N, DIG, g)
-    A = [eye(3), eye(3), N;
-         0, r1(3), -r1(2), 0, r2(3), -r2(2), N(2)*r3(3) - N(3)*r3(2);
-         -r1(3), 0, r1(1), -r2(3), 0, r2(1), N(3)*r3(1) - N(1)*r3(3);
-         r1(2), -r1(1), 0, r2(2), -r2(1), 0, N(1)*r3(2) - N(2)*r3(1);
-         1 0 0 0 0 0 0];
-    b = [-g;zeros(3,1);DIG];
-    F = A\b;
-    F1 = F(1:3);
-    F2 = F(4:6);
-    N3 = F(7)*N;
-end
-
-% Compute torques at joints given moment arms and force vectors
-function T = torques(r, F)
-    T = zeros(size(F));
-    for i = 1:size(r, 2)
-        T(:,i) = cross(r(:,i), F(:,i));
     end
 end
 
@@ -768,7 +744,7 @@ function parents = findParents(count)
 end
 
 % Four-legged robot with given leg DoF and either trot or quasistatic gait
-function config = quadruped(dof, w, h, L, trot)
+function config = quadruped(dof, w, h, L, trot, horizon)
     config.count = [4, ones(1,dof(1)-1), 0, ones(1,dof(2)-1), 0,...
                        ones(1,dof(3)-1), 0, ones(1,dof(4)-1), 0];
     config.clearance = 0.04;
@@ -777,6 +753,7 @@ function config = quadruped(dof, w, h, L, trot)
     config.joints = zeros(3, 3, sum(config.count));
     config.limits = zeros(sum(config.count), 2); % angle limits
     config.gait.dyaw = deg2rad(5); % gait max yaw correction per step
+    config.gait.horizon = horizon;
     if trot
         config.gait.angles = zeros(sum(config.count), 2); % gait states
         config.gait.feet = zeros(sum(config.count), 2); % foot contacts
@@ -831,10 +808,21 @@ function config = quadruped(dof, w, h, L, trot)
         end
     end
     config.parents = findParents(config.count);
+    config.bodies{1} = interpolateBody(config.bodies{1}, 5);
+end
+
+function body = interpolateBody(vertices, n)
+    d = 1/n:1/n:1;
+    body = zeros(3, size(vertices, 2)*n);
+    for i = 1:size(vertices, 2)
+        p1 = vertices(:,i);
+        p2 = vertices(:,1+mod(i,size(vertices,2)));
+        body(:,1+(i-1)*n:i*n) = p1 + (p2-p1).*d;
+    end
 end
 
 % Six-legged robot geometry with 3-DoF per leg and 2 body joints
-function config = hexapod(w, h, L)
+function config = hexapod(w, h, L, horizon)
     leg = [1 1 0];
     config.count = [3, 3, 2, leg, leg, leg, leg, leg, leg];
     config.clearance = 0.0;
@@ -848,6 +836,7 @@ function config = hexapod(w, h, L)
     config.gait.feet = zeros(sum(config.count), 2); % gait foot contacts
     config.gait.dx = [0 0; 0.1 0.1; 0 0]; % gait centroid motion
     config.gait.dyaw = deg2rad(5); % gait max yaw correction per step
+    config.gait.horizon = horizon;
     x = [1;0;0]; % right
     y = [0;1;0]; % forward
     z = [0;0;1]; % up
@@ -885,4 +874,7 @@ function config = hexapod(w, h, L)
         end
     end
     config.parents = findParents(config.count);
+    config.bodies{1} = interpolateBody(config.bodies{1}, 5);
+    config.bodies{2} = interpolateBody(config.bodies{1}, 5);
+    config.bodies{3} = interpolateBody(config.bodies{1}, 5);
 end
