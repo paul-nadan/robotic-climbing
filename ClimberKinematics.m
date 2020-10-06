@@ -50,17 +50,17 @@
 
 global X Y Z dZdx dZdy OBSTACLES FRAMES ANIMATE RECORD PLOT SIMULATE SEED_TERRAIN SEED COST_FUNCTION
 
-% GLOBAL PARAMETERS
-SIMULATE = ~~0; % flag to run new simulation instead of using existing data
+% GLOBAL PARAMETERStt
+SIMULATE = ~~1; % flag to run new simulation instead of using existing data
 SEED_TERRAIN = ~~1; % flag to reuse a previous terrain seed
 ANIMATE = ~~1; % flag to animate robot motion
-RECORD = ~~1; % flag to save animations as video files
+RECORD = ~~0; % flag to save animations as video files
 PLOT = ~~1; % flag to plot final robot condition and path
-SEED = -1; % use a previous seed, -1 for same seed as last round
-COST_FUNCTION = @costConstant; % e.g. costConstant, costForce, costGripper
+SEED = 44; % use a previous seed, -1 for same seed as last round
+COST_FUNCTION = @costGripper; % e.g. costConstant, costForce, costGripper
 
 % SIMULATION PARAMETERS
-SCORES = {'Normal', 'Tangential', '|F|^2', 'Ratio', 'Margin', 'Torque', 'Distance', 'Solve Time'}; % output variable names
+SCORES = {'Normal', 'Tangential', '|F|^2', 'Rat Mgn', 'Mag Mgn', 'Margin', 'Torque', 'Distance', 'Solve Time'}; % output variable names
 CONFIG_NAMES = {'8-DoF', '9-DoF', '10-DoF', '11-DoF', '12-DoF'}; % configuration names
 COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
 SWEEP = 1; % values for parameter being swept
@@ -93,6 +93,19 @@ elseif ANIMATE || PLOT
         [0 0.2, 0.3*length(CONFIGURATIONS) 0.7]);
 end
 
+% SET RANDOM SEED
+if SEED_TERRAIN
+    if SEED >= 0
+        seed = SEED;
+    end
+    rng(seed);
+else
+    rng shuffle
+    s = rng;
+    seed = s.Seed;
+end
+fprintf('Terrain Seed: %d\n\n', seed);
+
 % SWEEP PARAMETER
 rawScores = zeros(length(SWEEP)*SAMPLES, length(CONFIGURATIONS), length(SCORES));
 sumScores = zeros(length(SWEEP), length(CONFIGURATIONS), length(SCORES)+1);
@@ -105,8 +118,8 @@ for iter = 1:size(rawScores,1)
 
     % GENERATE TERRAIN
     if SIMULATE
-        [X, Y, Z, dZdx, dZdy, OBSTACLES, seed] = terrain([-1.5, 1.5], ...
-            [-1.5 3.5], .01, [1,1,0.5]*sweep, [1, .25, 0.0625], 0, seed);
+        [X, Y, Z, dZdx, dZdy, OBSTACLES] = terrain([-1.5, 1.5], ...
+            [-1.5 3.5], .01, [1,1,0.5]*sweep, [1, .25, 0.0625], 0);
     end
     
     % INITIALIZE ROBOT
@@ -251,8 +264,26 @@ if size(meanScores,1) > 1
     end
 end
 
+% Plot margin vs step for 1 trial
+marginRat = stepScores(:,1,4);
+marginMag = stepScores(:,1,5);
+margin = stepScores(:,1,6);
+figure(); hold on;
+plot(marginRat, 'r');
+plot(marginMag, 'b');
+plot(margin, 'k');
+plot(1+0*margin, 'k--')
+xlabel('Step'); ylabel('Margin');
+legend('Ratio Margin', 'Magnitude Margin', 'Combined Margin', 'Maximum Threshold');
+title('Grasp Adhesion Margin');
+
 function scores = computeScores(robot, lastRobot, i)
     global COST_FUNCTION
+    [F1, n1,t1,~] = quasiStaticDynamicsMargin(robot, i);
+    [F2, ~,~,~] = quasiStaticDynamicsKnownForce(robot, i, robot.F);
+    margin1 = gripperMargin(n1, t1);
+    deltaForce = sum(abs(F1-F2), 'all');
+    fprintf('Force difference = %f, ', deltaForce);
     if isequal(func2str(COST_FUNCTION), 'costConstant')
         [~, Fnorm, Ftang, T] = quasiStaticDynamics(robot, i);
     else
@@ -263,11 +294,12 @@ function scores = computeScores(robot, lastRobot, i)
     torque = max(vecnorm(T));
     Fnorm = max(Fnorm,0);
     Fmag = sqrt(Fnorm.^2 + Ftang.^2);
-    margin = gripperMargin(Fnorm, Ftang);
+    [margin, ratioMargin, magnitudeMargin] = gripperMargin(Fnorm, Ftang);
+    fprintf('Margin improvement = %f\n', margin-margin1);
     ratio = normalForce./tangentForce;
 %     pathLength = norm(robot.origin - lastRobot.origin);
     distance = robot.origin(2) - lastRobot.origin(2);
-    scores = [normalForce, tangentForce, sum(Fmag.*Fmag), ratio, margin, torque, distance];
+    scores = [normalForce, tangentForce, sum(Fmag.*Fmag), max(ratioMargin), max(magnitudeMargin), margin, torque, distance];
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -275,22 +307,10 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Generates random terrain composed of planar segments
-function [xq, yq, zq, dzdx, dzdy, obstacles, seed] = terrain(x, y, res, slope, roughness, corner, seed)
-    global SEED_TERRAIN SEED
+function [xq, yq, zq, dzdx, dzdy, obstacles] = terrain(x, y, res, slope, roughness, corner)
     % Fine height grid
     [xq,yq] = meshgrid(x(1):res:x(2), y(1):res:y(2));
     zq = zeros(size(xq));
-    if SEED_TERRAIN
-        if SEED >= 0
-            seed = SEED;
-        end
-        rng(seed);
-    else
-        rng shuffle
-        s = rng;
-        seed = s.Seed;
-    end
-    fprintf('Terrain Seed: %d\n\n', seed);
     for i = 1:length(slope)
         % Sparse height grid
         [X,Y] = meshgrid(x(1):roughness(i):x(2), y(1):roughness(i):y(2));
@@ -591,7 +611,7 @@ function r = step(r0, count0)
         h = min(horizon*length(X0), length(r0.seed));
         Xn(1:h) = r0.seed(1:h);
     end
-    [F0,~,~,~] = quasiStaticDynamics(update(rd(2)),count0);
+    [F0,~,~,~] = quasiStaticDynamics(state2robot(Xn(1:length(X0)),r0.config), count0);
     F0 = reshape(F0(:,1:end-1), [], 1);
     lb = [lb; zeros(size(F0))-Inf];
     ub = [ub; zeros(size(F0))+Inf];
@@ -600,19 +620,23 @@ function r = step(r0, count0)
         'Algorithm','sqp','ConstraintTolerance',1e-4,...
         'Display','iter','SpecifyObjectiveGradient',false, 'CheckGradients', false, 'FiniteDifferenceType', 'central');
     
+    % DEBUG
+%     [c0, ceq0] = constraintsLookAhead([Xn;F0],rd,i,count0>0)
+%     stateVectorBounds = [lb, [Xn;F0], ub]
     % First find any valid solution
     [xFree,~,~,outputFree] = fmincon(@(x)costConstant(x,rd,i),[Xn;F0],[],[],...
         Aeq,beq,lb,ub,@(x)constraintsLookAhead(x,rd,i,count0>0),options);
     Xn = xFree(1:length(Xn));
     robotFree = state2robot(Xn(1:length(X0)), r0.config);
-    [F0,~,~,~] = quasiStaticDynamics(robotFree,count0);
+    [F0,~,~,~] = quasiStaticDynamicsMargin(robotFree,count0);
     F0 = reshape(F0(:,1:end-1), [], 1);
     
     [x,~,~,output] = fmincon(@(x)COST_FUNCTION(x,rd,i),[Xn;F0],[],[],...
         Aeq,beq,lb,ub,@(x)constraintsLookAhead(x,rd,i,count0>0),options);
     % fallback
     if count0>0&&output.constrviolation > options.ConstraintTolerance
-        x = xFree;
+        fprintf('Falling back on no-cost solution\n');
+        x = [Xn; F0];
         output = outputFree;
     end
     
@@ -643,7 +667,7 @@ function [c, g] = costGripper(x, rd, i)
     xF = x(end-nF+1:end); % force components
     Nx = (length(x)-nF)/(length(rd)-1); % length of robot state vector
     robot = state2robot(x(1:Nx), rd(1).config);
-    feet = robot.vertices(:, robot.gait.feet(:,i(1)) > 0);
+    feet = robot.vertices(:, robot.gait.feet(:,iF) > 0);
     
     F = reshape(xF, 3, []);
     
@@ -670,8 +694,9 @@ function [c, g] = costGripper(x, rd, i)
     g = zeros(size(x));
 end
 
-function c = gripperMargin(Fnorm, Ftang)
+function [c, c1, c2] = gripperMargin(Fnorm, Ftang)
     Fmax = 25;
+    Fnorm = max(Fnorm, 0);
     c1 = Fnorm./max(Ftang, 1e-6)/tand(20);
     c2 = sqrt(Fnorm.^2+Ftang.^2)./Fmax;
     c = max([c1, c2]);
@@ -720,6 +745,14 @@ function [c,ceq] = constraintsLookAhead(x, rd, i, stepping)
     end
     c = [c; cF];
     ceq = [ceq; ceqF];
+    % DEBUG
+%     if abs(x(1) - 0.0459) < 0.0001
+%         if length(rd) == 2
+%             the_state = x'
+%             the_c = c'
+%             the_ceq = ceq'
+%         end
+%     end
 end
 
 % x = current state, r0 = initial configuration (for stance feet)
@@ -740,22 +773,11 @@ function [c,ceq] = constraints(x, r0, i, stepping)
     c = [dz; -B(3)];
 end
 
-function [c,ceq] = constraintsForce(xF, robot, iF)
-    global dZdx dZdy
-    
+function [c,ceq] = constraintsForce(xF, robot, iF)    
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
     WEIGHT = 5*9.81; % Magnitude of gravity force (N)
     feet = robot.vertices(:, robot.gait.feet(:,iF) > 0);
     r = feet - robot.origin;
-    
-    % Find normal vectors
-    N = zeros(3,size(feet, 2));
-    for iFoot = 1:size(feet, 2)
-        foot = feet(:,iFoot);
-        N(:,iFoot) = [-f(foot(1),foot(2),dZdx);...
-                       -f(foot(1),foot(2),dZdy); 1];
-        N(:,iFoot) = N(:,iFoot)/norm(N(:,iFoot));
-    end
     
     % Find contact forces
     G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
@@ -777,7 +799,7 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-% Find forces at [feet, centroid] and torques at [shoulder 1, knee 1, ...]
+% Find contact forces that optimize force magnitude
 function [F, Fnorm, Ftang, T] = quasiStaticDynamics(robot, count)
     global dZdx dZdy
     
@@ -841,8 +863,75 @@ function [F, Fnorm, Ftang, T] = quasiStaticDynamics(robot, count)
     end
 end
 
+% Find contact forces that optimize adhesion margin
+function [F, Fnorm, Ftang, T] = quasiStaticDynamicsMargin(robot, count)
+    global dZdx dZdy
+    
+    GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
+    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
+    
+    i = mod(count, size(robot.gait.angles, 2))+1;
+    feet = robot.vertices(:, robot.gait.feet(:,i) > 0);
+    r = feet - robot.origin;
+    
+    % Find normal vectors
+    N = zeros(3,size(feet, 2));
+    for iFoot = 1:size(feet, 2)
+        foot = feet(:,iFoot);
+        N(:,iFoot) = [-f(foot(1),foot(2),dZdx);...
+                       -f(foot(1),foot(2),dZdy); 1];
+        N(:,iFoot) = N(:,iFoot)/norm(N(:,iFoot));
+    end
+    
+    % Find contact forces
+    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
+    Aeq_torque = zeros(3,3*size(feet,2));
+    for iFoot = 1:size(feet,2)
+        ri = r(:,iFoot);
+        Aeq_torque(:,iFoot*3-2:iFoot*3) = [0, ri(3), -ri(2);
+                                           -ri(3), 0, ri(1);
+                                           ri(2), -ri(1), 0];
+    end
+    X0 = robot2state(robot);
+    Aeq = [repmat(eye(3), 1, size(feet,2)); Aeq_torque];
+    Aeq = [zeros(6,length(X0)), Aeq];
+    beq = [-G;zeros(3,1)];
+    [F0,~,~,~] = quasiStaticDynamics(robot, count);
+    F0 = reshape(F0(:,1:end-1), [], 1);
+    lb = [X0; -ones(size(F0))*Inf];
+    ub = [X0; ones(size(F0))*Inf];
+    rd = [robot, robot];
+    options = optimoptions('fmincon','Algorithm','sqp','Display','none');
+    [X,~,~,~] = fmincon(@(x)costGripper(x, rd, count),[X0;F0],[],[],...
+        Aeq,beq,lb,ub,[],options);
+    Fvec = X(length(X0)+1:end);
+    F = [reshape(Fvec, 3, []), G];
+    
+    % Decompose forces into components
+    Fnorm = zeros(1,size(feet,2));
+    Ftang = zeros(1,size(feet,2));
+    for iFoot = 1:size(feet,2)
+        Fnorm(iFoot) = -F(:,iFoot)'*N(:,iFoot);
+        Ftang(iFoot) = norm(cross(F(:,iFoot),N(:,iFoot)));
+    end
+    
+    % Compute torques
+    joints = robot.vertices - robot.links;
+    T = zeros(size(joints));
+    for iJoint = 1:size(robot.vertices, 2)
+        nChildren = find([robot.config.parents(iJoint+1:end),0]<iJoint, 1);
+        iChildren = iJoint:iJoint+nChildren-1;
+        iFeetBool = double(robot.gait.feet(:,i)' > 0);
+        iFeetBool(iChildren) = -iFeetBool(iChildren);
+        iFeet = find(iFeetBool(iFeetBool~=0) < 0);
+        for iFoot = iFeet
+            rFoot = feet(:,iFoot)-joints(:,iJoint);
+            T(:, iJoint) = T(:, iJoint) + cross(rFoot, F(:,iFoot));
+        end
+    end
+end
 
-% Find forces at [feet, centroid] and torques at [shoulder 1, knee 1, ...]
+% Compute force components and torques from contact forces
 function [F, Fnorm, Ftang, T] = quasiStaticDynamicsKnownForce(robot, count, F)
     global dZdx dZdy
     
