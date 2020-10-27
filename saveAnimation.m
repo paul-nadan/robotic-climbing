@@ -1,5 +1,5 @@
-% USAGE: writeAnimation(FRAMES{1}, 'Filename')
-function writeAnimation(M, name)
+% USAGE: saveAnimation(FRAMES, 'Filename')
+function saveAnimation(M, name)
     minx = 100000;
     miny = 100000;
     for i = 1:length(M)
@@ -18,7 +18,7 @@ function writeAnimation(M, name)
             M(i).cdata = M(i).cdata(:,1:miny,:);
         end
     end
-    myVideo = VideoWriter(name, 'Uncompressed AVI');
+    myVideo = VideoWriter(['results/animations/' name], 'Uncompressed AVI');
     myVideo.FrameRate = 10;
     open(myVideo);
     writeVideo(myVideo, M);
