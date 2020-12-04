@@ -1,15 +1,26 @@
 function results = optimize(getConfig, ...
-    getTerrain, getScores, SWEEP1, SWEEP2, SAMPLES, STEPS, TIME_STEP, ...
-    ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA)
+    getTerrain, getScores, SWEEP1, SWEEP2, SAMPLES, STEPS, ...
+    ABORT_STRIKES, IGNORE_FAILS, SEED, ITERS)
     
     FAIL_COST = 1;
     startTime = tic();
+    
+    % Set random seed
+    if SEED >= 0
+        rng(SEED, 'twister');
+    else
+        rng shuffle
+        s = rng;
+        SEED = s.Seed;
+    end
+    fprintf('Simulation Seed: %d\n\n', SEED);
+    seeds = rand(SAMPLES, 1)*1000;
     
     Sweep1 = optimizableVariable('Var1', [min(SWEEP1), max(SWEEP1)]);
     Sweep2 = optimizableVariable('Var2', [min(SWEEP2), max(SWEEP2)]);
     results = bayesopt(@cost, [Sweep1, Sweep2], 'PlotFcn', ...
         @plotObjectiveModel, 'UseParallel', 1, 'Verbose', 2, ...
-        'MaxObjectiveEvaluations', 50)
+        'MaxObjectiveEvaluations', ITERS)
     fprintf('Total optimization runtime: %.3f seconds\n', toc(startTime));
     
     
@@ -24,12 +35,12 @@ function results = optimize(getConfig, ...
         strikes = 0;
         scores = zeros(STEPS, SAMPLES);
         for sample = 1:SAMPLES
-            grid = feval(getTerrain, sweep1, sweep2, -1);
+            grid = feval(getTerrain, sweep1, sweep2, seeds(sample));
             robot = spawnRobot(grid.spawn, eye(3), config, grid);
             robots = repmat(robot, STEPS + 1, 1);
             for i = 1:STEPS
                 lastRobot = robots(i);
-                if lastRobot.fail
+                if 0 && lastRobot.fail
                     robot = lastRobot;
                     robots(i+1) = robot;
                 else
