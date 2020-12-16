@@ -1,5 +1,4 @@
 function animateStep(r1, r2, dt, count, grid)
-%     return
     i = mod(count-1, size(r1.gait.angles, 2))+1;
     global FRAMES RECORD ANIMATE
     if ~ANIMATE && ~RECORD
