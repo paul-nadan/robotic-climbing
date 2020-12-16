@@ -64,8 +64,8 @@ SEED = 42; % set the terrain seed, -1 for a random seed
 SCORES = {'Success Rate', 'Normal', 'Tangential', '|F|^2', 'Rat Mgn', 'Mag Mgn', 'Cost', 'Torque', 'Distance', 'Solve Time'}; % output variable names
 PLOT_SCORES = [1,7];
 % PLOT_COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
-SWEEP1 = 0.15:0.02:0.25; % values for parameter being swept
-SWEEP2 = 0.25:0.02:0.35;
+SWEEP1 = 0.05:.15:.5;%0.15:0.02:0.25; % values for parameter being swept
+SWEEP2 = 0.05:.15:.5;%0.25:0.02:0.35;
 AXIS_LABELS = {'Back Leg Length (m)', 'Front Leg Length (m)'};
 % AXIS_LABELS = {'Terrain Difficulty', 'Configuration'};
 SAMPLES = 10; % number of duplicate samples to average at each value
@@ -118,6 +118,7 @@ function config = getConfig(var1, var2)
     configs = {[2,2,2,2], [3,2,2,2], [3,3,2,2], [3,3,3,2], [3,3,3,3]};
     config = quadruped(configs{3}, ...
         0.1, 0.3, {var1, [var2/2, var2/2]}, 0, 2);
+%         0.1, 0.3, {var1, var2}, 0, 2);
 end
 
 % User-defined terrain geometry as a function of swept parameters

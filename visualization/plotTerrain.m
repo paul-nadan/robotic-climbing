@@ -7,7 +7,7 @@ function plotTerrain(grid)
             (grid.y>=obstacle(2,1)&grid.y<=obstacle(2,2));
         zq(iObstacle) = obstacle(3,2);
     end
-    mesh(grid.x(1:2:end,1:2:end),-zq(1:2:end,1:2:end),grid.y(1:2:end,1:2:end), zq(1:2:end,1:2:end));
+    mesh(grid.x(1:2:end,1:2:end),-zq(1:2:end,1:2:end),grid.y(1:2:end,1:2:end), zq(1:2:end,1:2:end), 'FaceAlpha',.5,'EdgeAlpha',.7);
     hold on
     axis equal
 end
