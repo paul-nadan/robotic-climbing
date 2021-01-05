@@ -3,14 +3,15 @@
 % config = quadruped([3,3,2,2], 0.1, 0.3, {.2, [.16, .16]}, 0, 2);
 % config.clearance = 0.1;
 % f = [0.3, .4, -.3];
-% [r, f] = discreteStepp(f, k, 1, config, []);
-% figure();
-% [r, f] = discreteStepp(mirrorFoot(f), k, 3, config, []);
-
-% for step = 1:20
-% clf;
-% % figure()
+% % [r, f] = discreteStepp(f, k, 1, config, []);
+% % figure();
+% % [r, f] = discreteStepp(mirrorFoot(f), k, 3, config, []);
+% 
+% for step = 1:5
+% % clf;
+% figure()
 % [r, f] = discreteStepp(f, k, mod(step-1, 4)+1, config, []);
+% title("Step " + num2str(step));
 % drawnow();
 % r.fail
 % end

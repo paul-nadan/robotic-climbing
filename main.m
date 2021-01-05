@@ -66,8 +66,7 @@ SCORES = {'Success Rate', 'Cost', 'Failures Per Meter', 'Cost Per Meter', 'Torqu
 PLOT_SCORES = [1,2,3,4,6];
 % PLOT_COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
 SWEEP1 = 0.1:0.05:0.3;%0.15:0.02:0.25; % values for parameter being swept
-SWEEP2 = 0.1:0.05:0.3;%0.25:0.02:0.35;
-AXIS_LABELS = {'Back Leg Length (m)', 'Front Leg Length (m)'};
+SWEEP2 = 0.1:0.05:0.3;%0.25:0.02:0.35;AXIS_LABELS = {'Back Leg Length (m)', 'Front Leg Length (m)'};
 % AXIS_LABELS = {'Terrain Difficulty', 'Configuration'};
 SAMPLES = 10; % number of duplicate samples to average at each value
 STEPS = 5; % number of robot steps to simulate per trial
