@@ -61,7 +61,8 @@ function r = step(r0, count0, grid)
     Aeq = [Aeq, zeros(size(Aeq,1),1)];
     lb = [lb; -Inf];
     ub = [ub; Inf];
-    
+%     x = [Xn; F0; C0];
+%     output.constrviolation = 2;
     [x,~,~,output] = fmincon(@(x)costMax(x,rd,i),[Xn;F0;C0],[],[],...
         Aeq,beq,lb,ub,@(x)constraintsLookAheadMax(x,rd,i,count0>0, grid),options);
 
@@ -89,16 +90,33 @@ function r = step(r0, count0, grid)
             r0.gait.horizon = r0.gait.horizon - 1;
             r = step(r0, count0, grid);
             r.gait.horizon = horizon;
-        elseif norm(r0.gait.dx) > 2e-2 % try with half and quarter step
-            fprintf('Trying shorter step: %d\n', norm(r0.gait.dx(:,i(iStep)))/2);
-            r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
-            r0.gait.dyaw = r0.gait.dyaw/2;
-            r0.gait.dx = r0.gait.dx/2;
-            r0.horizon = 2; % TODO: shouldn't be hardcoded
-            r = step(r0, count0, grid);
-            r0.gait.dyaw = r0.gait.dyaw*2;
-            r0.gait.dx = r0.gait.dx*2;
+%         elseif norm(r0.gait.dx) > 2e-2 % try with half and quarter step
+%             fprintf('Trying shorter step: %d\n', norm(r0.gait.dx(:,i(iStep)))/2);
+%             r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
+%             r0.gait.dyaw = r0.gait.dyaw/2;
+%             r0.gait.dx = r0.gait.dx/2;
+%             r0.horizon = 2; % TODO: shouldn't be hardcoded
+%             r = step(r0, count0, grid);
+%             r0.gait.dyaw = r0.gait.dyaw*2;
+%             r0.gait.dx = r0.gait.dx*2;
+        else
+            fprintf('Trying global optimization\n');
+            [x,cost,flag,output,solutions] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid);
+            if cost > 1 || flag ~= -1
+                x = [Xn; F0; C0];
+            end
+            r = state2robot(x(1:length(X0)), r0.config);
+            r.F = reshape(x(end-length(F0)+1-1:end-1), 3, []);
+            r.fail = cost > 1;
+            r.seed = x(length(X0)+1:horizon*length(X0));
         end
+%         else
+%             x = [Xn; F0; C0];
+%             r = state2robot(x(1:length(X0)), r0.config);
+%             r.F = reshape(x(end-length(F0)+1-1:end-1), 3, []);
+%             r.fail = true;
+%             r.seed = x(length(X0)+1:horizon*length(X0));
+%         end
     else
         r.seed = x(length(X0)+1:horizon*length(X0));
     end
@@ -216,7 +234,7 @@ function [c,ceq] = constraints(x, r0, i, stepping, grid)
     c = [dz; -B(3)];
 end
 
-function [c,ceq] = constraintsForce(xF, robot, iF)    
+function [c,ceq] = constraintsForce(xF, robot, iF)
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
     WEIGHT = 5*9.81; % Magnitude of gravity force (N)
     feet = robot.vertices(:, robot.gait.feet(:,iF) > 0);
@@ -238,12 +256,16 @@ function [c,ceq] = constraintsForce(xF, robot, iF)
 end
 
 % Global optimization with GlobalSearch
-function [x,cost,flag,output,solutions] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options)
-    gs = GlobalSearch('Display','iter');
+function [x,cost,flag,output,solutions] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid)
+    gs = GlobalSearch('Display','iter', 'OutputFcn', @stopIfConverged);
     problem = createOptimProblem('fmincon','x0',[Xn;F0;C0],...
-        'objective',@(x)costMax(x,rd,i),'lb',lb,'ub',ub,'Aeq',Aeq,'beq',beq,'nonlcon',@(x)constraintsLookAheadMax(x,rd,i,count0>0),'options',options);
+        'objective',@(x)costMax(x,rd,i),'lb',lb,'ub',ub,'Aeq',Aeq,'beq',beq,'nonlcon',@(x)constraintsLookAheadMax(x,rd,i,count0>0,grid),'options',options);
     [x,cost,flag,output,solutions] = run(gs,problem)
     output.constrviolation = 0;
+end
+
+function stop = stopIfConverged(optimValues,state)
+    stop = ~isempty(optimValues.bestfval) && optimValues.bestfval <= 1;
 end
 
 % Global optimization with random initial seeds

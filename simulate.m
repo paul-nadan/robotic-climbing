@@ -7,6 +7,8 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
     N2 = length(SWEEP2);
     startTime = tic();
     SIMULATE = isequal(0, REUSE_DATA);
+    ANIMATE_ = ANIMATE || RECORD;
+    PLOT_ = PLOT;
     
     % Set view window size
     close all;
@@ -20,7 +22,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
     
     % Set random seed
     if SEED >= 0
-        rng(SEED);
+        rng(SEED, 'twister');
     else
         rng shuffle
         s = rng;
@@ -42,7 +44,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
     end
     
     % Iterate over parameters
-    workers = (N1 > 1)*N1;
+    workers = (N1 > 1)*N1*SIMULATE;
     parfor (i1 = 1:N1,workers)
 %     for i1 = 1:N1
         for i2 = 1:N2
@@ -76,18 +78,22 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                     end
                     dt = NaN;
                     lastRobot = robots{i1, i2, i3}(i);
-                    if lastRobot.fail
+                    if 0 && lastRobot.fail
                         robot = lastRobot;
                         robots{i1, i2, i3}(i+1) = robot;
                     elseif SIMULATE
                         tic();
-                        robot = step(lastRobot, i, grid);
+                        robot = step2(lastRobot, i, grid);
                         dt = toc();
                         robots{i1, i2, i3}(i+1) = robot;
                     else
                         robot = robots{i1, i2, i3}(i+1);
                     end
-                    if robot.fail
+                    if i==-1
+                        stepScores(i,:) = NaN;
+                        stepScores(i,end) = dt;
+                        fprintf('Ignored\n');
+                    elseif robot.fail
                         stepScores(i,:) = NaN;
                         stepScores(i,1) = 0;
                         stepScores(i,end) = dt;
@@ -98,14 +104,16 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                         fprintf('%10.3f, ', stepScores(i,:));
                         fprintf(']\n');
                     end
-                    animateStep(lastRobot, robot, TIME_STEP, i, grid);
+                    if ANIMATE_
+                        animateStep(lastRobot, robot, TIME_STEP, i, grid);
+                    end
                     if robot.fail && ~lastRobot.fail
                         strikes = strikes + 1;
                     end
                 end
 
                 % Evaluate iteration results
-                rawScores(i1, i2, i3, :) = mean(stepScores, 'omitnan');
+                rawScores(i1, i2, i3, :) = mean(stepScores, 1, 'omitnan');
                 if IGNORE_FAILS && robot.fail
                     rawScores(i1, i2, i3, :) = NaN;
                 end
@@ -114,14 +122,14 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
 %                 F2 = quasiStaticDynamics(robot, STEPS, grid);
                 path = [robots{i1, i2, i3}.origin];
                 % Plot final robot state
-                if PLOT
+                if PLOT_
                     plotTerrain(grid);
-                    plotRobot(robots{i1, i2, i3}(end));
+                    plotRobot(robot);
 %                     plotForces(robot, F2, STEPS, 'r', 0.016);
                     plotForces(robot, F1, STEPS, 'g', 0.016);
     %                 plotTorques(robot, T, 'c', 0.1);
                     plot3(path(1,:), -path(3,:), path(2,:),'k','linewidth', 2);
-                    title(int(seeds(i1, i2, i3)));
+                    title(seeds(i1, i2, i3));
                     drawnow();
                 end
 

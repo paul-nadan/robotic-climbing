@@ -60,13 +60,14 @@ RECORD = ~~0; % flag to save animations as video files
 PLOT = ~~0; % flag to plot final robot condition and path
 
 % USER-DEFINED SIMULATION PARAMETERS
-SEED = 44; % set the terrain seed, -1 for a random seed
-SCORES = {'Success Rate', 'Normal', 'Tangential', '|F|^2', 'Rat Mgn', 'Mag Mgn', 'Margin', 'Torque', 'Distance', 'Solve Time'}; % output variable names
+SEED = 42; % set the terrain seed, -1 for a random seed
+SCORES = {'Success Rate', 'Normal', 'Tangential', '|F|^2', 'Rat Mgn', 'Mag Mgn', 'Cost', 'Torque', 'Distance', 'Solve Time'}; % output variable names
 PLOT_SCORES = [1,7];
 % PLOT_COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
 SWEEP1 = 0.15:0.02:0.25;%.5:.1:1; % values for parameter being swept
 SWEEP2 = 0.25:0.02:0.35;
 AXIS_LABELS = {'Back Leg Length (m)', 'Front Leg Length (m)'};
+% AXIS_LABELS = {'Terrain Difficulty', 'Configuration'};
 SAMPLES = 10; % number of duplicate samples to average at each value
 STEPS = 5; % number of robot steps to simulate per trial
 TIME_STEP = 0.25; % delay between frame updates for animation
@@ -75,23 +76,40 @@ IGNORE_FAILS = 0; % do not record any data from a failed trial
 REUSE_DATA = 0; % reuse previous simulation data in the workspace
 PLOT_ONLY = 0; % do not run the simulation
 OPTIMIZE = ~~0; % Perform an optimization instead of a parameter sweep
+ITERS = 50; % Maximum iterations for performing parameter optimization
 
 % RUN SIMULATION
 if REUSE_DATA == 1
     REUSE_DATA = robots;
 end
-if OPTIMIZE
+if OPTIMIZE && ~PLOT_ONLY
     results = optimize(@getConfig, ...
         @getTerrain, @getCost, SWEEP1, SWEEP2, SAMPLES, STEPS, ...
-        TIME_STEP, ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA);
-elseif ~PLOT_ONLY
+        ABORT_STRIKES, IGNORE_FAILS, SEED, ITERS);
+elseif ~OPTIMIZE && ~PLOT_ONLY
     [meanScores, rawScores, seeds, robots] = simulate(@getConfig, ...
         @getTerrain, @getScores, SWEEP1, SWEEP2, SAMPLES, STEPS, ...
         TIME_STEP, ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA);
 end
 
-% EVALUATE CUMULATIVE RESULTS
-if ~OPTIMIZE
+% VISUALIZE CUMULATIVE RESULTS
+if OPTIMIZE
+    f = fitrgp(results.XTrace, results.ObjectiveTrace);
+    preds = zeros(length(SWEEP1), length(SWEEP2));
+    for a = 1:length(SWEEP1)
+        for b = 1:length(SWEEP2)
+            preds(a,b) = predict(f, [SWEEP1(a), SWEEP2(b)]);
+        end
+    end
+    figure();
+    imagesc(SWEEP1, SWEEP2, preds');
+    xlabel(AXIS_LABELS{1});
+    ylabel(AXIS_LABELS{2});
+    title('Estimated Gaussian Process Model');
+    colorbar;
+    mse = sqrt(mean((results.ObjectiveTrace-resubPredict(f)).^2));
+    fprintf('Mean squared error: %.3d\n', mse);
+else
     plotResults(meanScores, SWEEP1, SWEEP2, SCORES, PLOT_SCORES, AXIS_LABELS);
 end
 
@@ -100,6 +118,7 @@ function config = getConfig(var1, var2)
     configs = {[2,2,2,2], [3,2,2,2], [3,3,2,2], [3,3,3,2], [3,3,3,3]};
     config = quadruped(configs{3}, ...
         0.1, 0.3, {var1, [var2/2, var2/2]}, 0, 2);
+%         0.1, 0.3, {var1, var2}, 0, 2);
 end
 
 % User-defined terrain geometry as a function of swept parameters
@@ -135,4 +154,5 @@ function cost = getCost(robot, lastRobot, i, grid)
     [margin, ~, ~] = gripperMargin(Fnorm, Ftang);
     distance = robot.origin(2) - lastRobot.origin(2);
     cost = min(1, max(robot.fail, margin));
+%     cost = robot.fail;
 end

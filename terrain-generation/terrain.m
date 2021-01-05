@@ -4,7 +4,7 @@ function grid = terrain(x, y, res, slope, roughness, corner, spawn, seed)
     if seed < 0
         rng('shuffle');
     else
-        rng(seed);
+        rng(seed, 'twister');
     end
     % Generate fine height grid
     [xq,yq] = meshgrid(x(1):res:x(2), y(1):res:y(2));
