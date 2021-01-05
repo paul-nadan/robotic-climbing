@@ -1,5 +1,5 @@
 function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
-    getTerrain, getScores, SWEEP1, SWEEP2, SAMPLES, STEPS, TIME_STEP, ...
+    getTerrain, getScores, averageScores, SWEEP1, SWEEP2, SAMPLES, STEPS, TIME_STEP, ...
     ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA)
 
     global FRAMES ANIMATE RECORD PLOT
@@ -147,6 +147,6 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
         end
     end
     rawScores(:, :, :, 1) = rawScores(:, :, :, 1).*(~aborted);
-    meanScores = mean(rawScores, 3, 'omitnan');
+    meanScores = feval(averageScores, rawScores, robots);
     fprintf('Total simulation runtime: %.3f seconds\n', toc(startTime));
 end

@@ -1,9 +1,19 @@
-addpath('terrain-generation', 'config-generation', 'robot-kinematics', ...
+staddpath('terrain-generation', 'config-generation', 'robot-kinematics', ...
     'optimization', 'visualization', 'discrete-model');
 close all
 config = quadruped([3,3,2,2], 0.1, 0.3, {.2, [.16, .16]}, 0, 2);
 res = 0.05;
-k = 3;
+k = -5:.1:5;
+f = [.3,.4,-.3];
+results = zeros(length(k),1);
+for i = 1:length(k)
+    clf;
+    r = discreteStep(f, k(i), 1, config, []);
+    drawnow();
+    results(i) = ~r.fail;
+end
+plot(k, results);
+return
 
 tic();
 [X, Y, Z] = meshgrid([-1 0 1], [-1 0 1], [-1 0 1]);

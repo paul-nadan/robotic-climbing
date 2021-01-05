@@ -23,7 +23,7 @@
 % surface curvature (k), the current step (step), the robot configuration
 % (config), the initial guess (X0), and the gravity vector (g)
 function [r, f] = discreteStep(f, k, step, config, X0)
-%     plotSphere(f, k)
+    plotSphere(f, k)
     nextStep = mod(step, size(config.gait.feet, 2)) + 1;
     iFeet = config.gait.feet(:, step);
     if isempty(X0)
@@ -55,7 +55,7 @@ function [r, f] = discreteStep(f, k, step, config, X0)
         r = state2robot(X, config);
         rplot = r;
         rplot = moveRobot(rplot, -center, eye(3));
-%         plotRobot(rplot);
+        plotRobot(rplot);
         r.fail = output.constrviolation > options.ConstraintTolerance;
         nextStep = mod(step, size(config.gait.feet,2)) + 1;
         feet = r.vertices(:, config.gait.feet(:, nextStep));

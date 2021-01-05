@@ -1,7 +1,7 @@
 % Compute new robot state given previous state and current step number
 function r = step2(r0, count0, grid)
     horizon = r0.gait.horizon;
-    weights = [1; 1];
+    weights = [1; 0];
     if horizon == -1
         weights = 1;
         horizon = 2;

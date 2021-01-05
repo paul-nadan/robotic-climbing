@@ -61,11 +61,12 @@ PLOT = ~~0; % flag to plot final robot condition and path
 
 % USER-DEFINED SIMULATION PARAMETERS
 SEED = 42; % set the terrain seed, -1 for a random seed
-SCORES = {'Success Rate', 'Normal', 'Tangential', '|F|^2', 'Rat Mgn', 'Mag Mgn', 'Cost', 'Torque', 'Distance', 'Solve Time'}; % output variable names
-PLOT_SCORES = [1,7];
+% SCORES = {'Success Rate', 'Normal', 'Tangential', '|F|^2', 'Rat Mgn', 'Mag Mgn', 'Cost', 'Torque', 'Distance', 'Solve Time'}; % output variable names
+SCORES = {'Success Rate', 'Cost', 'Failures Per Meter', 'Cost Per Meter', 'Torque', 'Distance', 'Solve Time'}; % output variable names
+PLOT_SCORES = [1,2,3,4,6];
 % PLOT_COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
-SWEEP1 = 0.05:.15:.5;%0.15:0.02:0.25; % values for parameter being swept
-SWEEP2 = 0.05:.15:.5;%0.25:0.02:0.35;
+SWEEP1 = 0.1:0.05:0.3;%0.15:0.02:0.25; % values for parameter being swept
+SWEEP2 = 0.1:0.05:0.3;%0.25:0.02:0.35;
 AXIS_LABELS = {'Back Leg Length (m)', 'Front Leg Length (m)'};
 % AXIS_LABELS = {'Terrain Difficulty', 'Configuration'};
 SAMPLES = 10; % number of duplicate samples to average at each value
@@ -74,7 +75,7 @@ TIME_STEP = 0.25; % delay between frame updates for animation
 ABORT_STRIKES = 0; % aborts remaining samples after this number of failures
 IGNORE_FAILS = 0; % do not record any data from a failed trial
 REUSE_DATA = 0; % reuse previous simulation data in the workspace
-PLOT_ONLY = 0; % do not run the simulation
+PLOT_ONLY = 1; % do not run the simulation
 OPTIMIZE = ~~0; % Perform an optimization instead of a parameter sweep
 ITERS = 50; % Maximum iterations for performing parameter optimization
 
@@ -88,7 +89,7 @@ if OPTIMIZE && ~PLOT_ONLY
         ABORT_STRIKES, IGNORE_FAILS, SEED, ITERS);
 elseif ~OPTIMIZE && ~PLOT_ONLY
     [meanScores, rawScores, seeds, robots] = simulate(@getConfig, ...
-        @getTerrain, @getScores, SWEEP1, SWEEP2, SAMPLES, STEPS, ...
+        @getTerrain, @getScores, @averageScores, SWEEP1, SWEEP2, SAMPLES, STEPS, ...
         TIME_STEP, ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA);
 end
 
@@ -145,7 +146,17 @@ function scores = getScores(robot, lastRobot, i, grid)
     ratio = normalForce./tangentForce;
 %     pathLength = norm(robot.origin - lastRobot.origin);
     distance = robot.origin(2) - lastRobot.origin(2);
-    scores = [~robot.fail, normalForce, tangentForce, sum(Fmag.*Fmag), max(ratioMargin), max(magnitudeMargin), margin, torque, distance];
+%     scores = [~robot.fail, normalForce, tangentForce, sum(Fmag.*Fmag), max(ratioMargin), max(magnitudeMargin), margin, torque, distance];
+    scores = [~robot.fail, margin, NaN, NaN, torque, distance];
+end
+
+function scores = averageScores(rawScores, robots)
+    scores = mean(rawScores, 3, 'omitnan');
+%     scores = max(rawScores, [], 3, 'omitnan');
+%     scores = min(rawScores, [], 3, 'omitnan');
+%     scores = std(rawScores, 0, 3, 'omitnan');
+    scores(:,:,3) = (1-scores(:,:,1))./scores(:,:,6);
+    scores(:,:,4) = scores(:,:,2)./scores(:,:,6);
 end
 
 function cost = getCost(robot, lastRobot, i, grid)
