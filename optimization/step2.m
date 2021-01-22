@@ -1,7 +1,7 @@
 % Compute new robot state given previous state and current step number
-function r = step2(r0, count0, grid)
+function r = step2(r0, count0, grid, skip)
     horizon = r0.gait.horizon;
-    weights = [1; 0];
+    weights = [1; 1];
     if horizon == -1
         weights = 1;
         horizon = 2;
@@ -56,7 +56,7 @@ function r = step2(r0, count0, grid)
         'Algorithm','sqp','ConstraintTolerance',1e-4,...
         'Display','off','SpecifyObjectiveGradient',true, 'CheckGradients', false, 'FiniteDifferenceType', 'central');
     [xFree,~,~,outputFree] = fmincon(@(x)costFull(x, []),Xn,[],[],...
-        Aeq,beq,lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, 0),options);
+        Aeq,beq,lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, 0, skip),options);
     Xn = xFree(1:length(Xn));
     
     % Full force prediction
@@ -66,7 +66,7 @@ function r = step2(r0, count0, grid)
         robotFree = state2robot(Xn(nX*(iStep-1)+1:nX*iStep), r0.config);
         [f0,~,~,~] = quasiStaticDynamicsMargin(robotFree,count0+iStep-1, grid);
         f0 = reshape(f0(:,1:end-1), [], 1);
-        c0 = max(costGripper(robotFree, f0, i(iStep), grid));
+        c0 = max(costGripper(robotFree, f0, i(iStep)+skip, grid));
         F0 = [F0; f0];
         C0 = [C0; c0];
     end
@@ -77,7 +77,7 @@ function r = step2(r0, count0, grid)
     lb = [lb; zeros(nFC, 1)-Inf];
     ub = [ub; zeros(nFC, 1)+Inf];
     [x,~,~,output] = fmincon(@(x)costFull(x, weights),[Xn;F0;C0],[],[],...
-        Aeq,beq,lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, length(weights)),options);
+        Aeq,beq,lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip),options);
 
     % Fallback to preliminary solution
     if length(weights)==1&&max(C0)<=1&&count0>0&&output.constrviolation > options.ConstraintTolerance
@@ -88,6 +88,7 @@ function r = step2(r0, count0, grid)
     
     % Post-processing and fallback to shorter horizon
     r = state2robot(x(1:nX), r0.config);
+    r.skip = skip;
     r.F = reshape(x(end-nFC+1:end-nFC+length(F0)/length(weights)), 3, []);
     r.fail = count0>0&&output.constrviolation > options.ConstraintTolerance;
     if r.fail
@@ -100,24 +101,29 @@ function r = step2(r0, count0, grid)
             fprintf('Trying shorter horizon: %d\n', -1);
             r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
             r0.gait.horizon = -1;
-            r = step2(r0, count0, grid);
+            r = step2(r0, count0, grid, 0);
             r.gait.horizon = horizon;
         elseif horizon > 1
             fprintf('Trying shorter horizon: %d\n', horizon-1);
             r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
             r0.gait.horizon = r0.gait.horizon - 1;
-            r = step2(r0, count0, grid);
+            r = step2(r0, count0, grid, 0);
             r.gait.horizon = horizon;
+        elseif skip <= 1
+            fprintf('Skipping step\n');
+            r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
+            r = step2(r0, count0, grid, skip+1);
         else
             fprintf('Trying global optimization\n');
-            [x,~,flag,~,~] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid, weights);
-            if flag ~= -1
-                x = [Xn; F0; C0];
-            end
+            [x,~,flag,~,~] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid, weights, 0);
+%             if flag ~= -1
+%                 x = [Xn; F0; C0];
+%             end
             r = state2robot(x(1:nX), r0.config);
             r.F = reshape(x(end-nFC+1:end-nFC+length(F0)/length(weights)), 3, []);
             r.fail = flag ~= -1;
             r.seed = x(nX+1:horizon*nX);
+            r.skip = 0;
         end
     else
         r.seed = x(nX+1:horizon*nX);
@@ -133,8 +139,8 @@ function [c, g] = costFull(x, weights)
 end
 
 % Satisfy all constraints for all steps in simulation horizon
-function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon)    
-    iF = mod(i(1), size(rd(1).gait.angles, 2))+1; % next step in gait cycle
+function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon, skip)    
+    iF = mod(i(1)+skip, size(rd(1).gait.angles, 2))+1; % next step in gait cycle
     nF = 3*sum(rd(2).gait.feet(:,iF) > 0); % number of force variables
     X = x(1:end-costHorizon*(1+nF)); % state variables
     xF = x(end-costHorizon*(1+nF)+1:end); % force variables
@@ -154,7 +160,7 @@ function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon)
             xFi = xF(nF*(iStep-1)+1:nF*iStep);
             xCi = xC(iStep);
             ceqF = constraintsForce(r, xFi, iF);
-            cC = constraintsCost(r, xFi, xCi, i(iStep), grid, iStep > 1);
+            cC = constraintsCost(r, xFi, xCi, i(iStep)+skip, grid, 0 > 1);
             c = [c; cC];
             ceq = [ceq; ceqF];
         end
@@ -242,15 +248,17 @@ function costs = costGripper(robot, xF, i, grid)
 end
 
 % Global optimization with GlobalSearch
-function [x,cost,flag,output,solutions] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid, weights)
+function [x,cost,flag,output,solutions] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid, weights, skip)
     gs = GlobalSearch('Display','iter', 'OutputFcn', @stopIfConverged);
     problem = createOptimProblem('fmincon','x0',[Xn;F0;C0],...
         'objective',@(x)costFull(x, weights),'lb',lb,'ub',ub,'Aeq',Aeq,'beq',beq,'nonlcon',...
-        @(x)constraintsFull(x, rd, i, count0>0, grid, length(weights)),'options',options);
+        @(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip),'options',options);
     [x,cost,flag,output,solutions] = run(gs,problem);
     output.constrviolation = 0;
 end
 
 function stop = stopIfConverged(optimValues,~)
-    stop = ~isempty(optimValues.bestfval) && optimValues.bestfval <= 1;
+    stop = ~isempty(optimValues.bestfval) && optimValues.bestfval <= 1 ...
+        && ~isempty(optimValues.localsolution.Exitflag) ...
+        && optimValues.localsolution.Exitflag > 0;
 end

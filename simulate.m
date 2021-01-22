@@ -62,6 +62,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                 % Initialize robot
                 if SIMULATE
                     robot = spawnRobot(grid.spawn, eye(3), config, grid);
+                    robot.skip = 0;
                     robots{i1, i2, i3} = repmat(robot, STEPS + 1, 1);
                 end
                 
@@ -70,6 +71,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                 fprintf('Scores:  [');
                 fprintf('%10s, ', string(SCORES));
                 fprintf(']\n');
+                skips = 0;
                 for i = 1:STEPS
                     if i < 10
                         fprintf('Step %d:  ', i);
@@ -83,12 +85,16 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                         robots{i1, i2, i3}(i+1) = robot;
                     elseif SIMULATE
                         tic();
-                        robot = step2(lastRobot, i, grid);
+                        robot = step2(lastRobot, i+skips, grid, 0);
                         dt = toc();
                         robots{i1, i2, i3}(i+1) = robot;
                     else
                         robot = robots{i1, i2, i3}(i+1);
                     end
+                    if ~isfield(robot, 'skip')
+                        robot.skip = 0;
+                    end
+                    skips = skips + robot.skip;
                     if i==-1
                         stepScores(i,:) = NaN;
                         stepScores(i,end) = dt;
@@ -99,13 +105,13 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                         stepScores(i,end) = dt;
                         fprintf('Failed to converge\n');
                     else
-                        stepScores(i,:) = [feval(getScores, robot, lastRobot, i, grid), dt];
+                        stepScores(i,:) = [feval(getScores, robot, lastRobot, i+skips, grid), dt];
                         fprintf('[');
                         fprintf('%10.3f, ', stepScores(i,:));
                         fprintf(']\n');
                     end
                     if ANIMATE_
-                        animateStep(lastRobot, robot, TIME_STEP, i, grid);
+                        animateStep(lastRobot, robot, TIME_STEP, i+skips-robot.skip, grid);
                     end
                     if robot.fail && ~lastRobot.fail
                         strikes = strikes + 1;
@@ -126,7 +132,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                     plotTerrain(grid);
                     plotRobot(robot);
 %                     plotForces(robot, F2, STEPS, 'r', 0.016);
-                    plotForces(robot, F1, STEPS, 'g', 0.016);
+                    plotForces(robot, F1, STEPS+skips, 'g', 0.016);
     %                 plotTorques(robot, T, 'c', 0.1);
                     plot3(path(1,:), -path(3,:), path(2,:),'k','linewidth', 2);
                     title(seeds(i1, i2, i3));

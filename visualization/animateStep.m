@@ -11,7 +11,13 @@ function animateStep(r1, r2, dt, count, grid)
     dJoints = (r2.vertices-r2.links) - (r1.vertices-r1.links);
     dVertices = r2.vertices - r1.vertices;
     plotTerrain(grid);
-    plotPoints(r1.vertices(:,r1.gait.feet(:,i)>0), 'b.');
+    if r1.fail
+        plotPoints(r1.vertices(:,r1.gait.feet(:,i)>0), 'r.');        
+    elseif r1.skip
+        plotPoints(r1.vertices(:,r1.gait.feet(:,i)>0), 'm.');
+    else
+        plotPoints(r1.vertices(:,r1.gait.feet(:,i)>0), 'b.');
+    end
     for t = 0:dt:1
         for iBody = 1:length(r1.bodies)
             body = r1.bodies{iBody}+t*dBody{iBody};

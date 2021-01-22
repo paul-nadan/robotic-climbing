@@ -1,93 +1,142 @@
 close all
+addpath('terrain-generation', 'config-generation', 'robot-kinematics', ...
+    'optimization', 'visualization', 'discrete-model', 'dynamics');
 config = quadruped([3,3,2,2], 0.1, 0.3, {.2, [.16, .16]}, 0, 2);
 seed = 42;
-step = 1;
+iStep = 2;
 global ANIMATE RECORD
 ANIMATE = 1;
 RECORD = 1;
 % grid = terrain([-.75, 1.25], ...
 %         [-1.5 0.5], .01, [1,1,0.5], [1, .25, 0.0625], 0, [0;-.75;0], seed);
 % r0 = spawnRobot(grid.spawn, eye(3), config, grid);
-% r1 = step(r0, i, grid);
-
+% r1 = step(r0, 1, grid);
+% r2 = step(r1, iStep, grid);
+% 
 % plotTerrain(grid);
-% plotRobot(r0);
 % plotRobot(r1);
+% plotRobot(r2);
 
-% X = [q1...qN, F1...FN]
-t = 0:.05:1;
-Ni = length(t);
+dt = 0.05;
+t = 0:dt:1;
+N = length(t);
 Nq = size(config.gait.angles, 1) + 9;
-Nf = 3*sum(config.gait.feet(:,step));
-% x0 = getStartingPoint(r0, r1, step, grid, Nq, Nf, Ni, t);
+Nf = 3*sum(config.gait.feet(:,iStep));
+q0 = robot2state(r1);
+q1 = robot2state(r2);
+% x0 = getStartingPoint(q0, q1, config, iStep, grid, Nq, Nf, N, dt);
 
-state0 = robot2state(r0);
-state1 = robot2state(r1);
-lb = [repmat(min(state0,state1),Ni,1); zeros(Nf*Ni,1)-Inf];
-ub = [repmat(max(state0,state1),Ni,1); zeros(Nf*Ni,1)+Inf];
-lb(1:Nq) = state0;
-ub(1:Nq) = state0;
-lb(Nq*(Ni-1)+1:Nq*Ni) = state1;
-ub(Nq*(Ni-1)+1:Nq*Ni) = state1;
+lb = [repmat(min(q0,q1)',N,1), zeros(N,Nq+Nf)-Inf];
+ub = [repmat(max(q0,q1)',N,1), zeros(N,Nq+Nf)+Inf];
+lb(1,1:2*Nq) = [q0', zeros(1,Nq)];
+ub(1,1:2*Nq) = [q0', zeros(1,Nq)];
+lb(end,1:2*Nq) = [q1', zeros(1,Nq)];
+ub(end,1:2*Nq) = [q1', zeros(1,Nq)];
+% lb(end,Nq+1:2*Nq) = [zeros(1,Nq)];
+% ub(end,Nq+1:2*Nq) = [zeros(1,Nq)];
     
-options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
+% options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
+%         'Algorithm','sqp','ConstraintTolerance',1e-4,...
+%         'Display','iter','SpecifyObjectiveGradient',true, 'CheckGradients', false, 'FiniteDifferenceType', 'central');
+% [x1,~,~,output] = fmincon(@(x)cost0(x,r1,iStep,grid,Nq,Nf,N),x0,[],[],...
+%         [],[],lb,ub,@(x)constraints(x,r1,r2,iStep,grid,Nq,Nf,N,dt),options);
+% % 
+options = optimoptions('fmincon','MaxFunctionEvaluations',2e4,...
         'Algorithm','sqp','ConstraintTolerance',1e-4,...
-        'Display','iter','SpecifyObjectiveGradient',true, 'CheckGradients', false, 'FiniteDifferenceType', 'central');
-% [x1,~,~,output] = fmincon(@(x)cost0(x,r0,step,grid,Nq,Nf,Ni),x0,[],[],...
-%         [],[],lb,ub,@(x)constraints(x,r0,r1,step,grid,Nq,Nf,Ni,t),options);
-%     
-% [x,~,~,output] = fmincon(@(x)cost(x,r0,step,grid,Nq,Nf,Ni),x1,[],[],...
-%         [],[],lb,ub,@(x)constraints(x,r0,r1,step,grid,Nq,Nf,Ni,t),options);
+        'Display','iter','SpecifyObjectiveGradient',false, 'FiniteDifferenceType', 'central');
+[x,~,~,output] = fmincon(@(x)costGrip(x,r1,iStep,grid,Nq,Nf,N),x1,[],[],...
+        [],[],lb,ub,@(x)constraints(x,r1,r2,iStep,grid,Nq,Nf,N,dt),options);
 
-FRAMES = animateTrajectory(x, step, config, grid, Nq, Nf, Ni);
+[cFinal, costFinal] = costGrip(x, r1, iStep, grid, Nq, Nf, N);
+FRAMES = animateTrajectory(x, iStep, config, grid, Nq, Nf, N);
 
-function X0 = getStartingPoint(r0, r1, step, grid, Nq, Nf, Ni, t)
-    x0 = robot2state(r0);
-    x1 = robot2state(r1);
-    X0 = zeros(Ni*(Nq+Nf),1);
-    for it = 1:Ni
-        X0(1+(it-1)*Nq:it*Nq) = x0 + (x1-x0)*it/Ni;
-    end
-    q = reshape(X0(1:Ni*Nq), Nq, Ni);
-    [~, ddq] = computeDerivatives(zeros(Nq,1), q, t);
-    for it = 1:Ni
-        r = state2robot(q(:,it), r0.config);
-        X0(1+(it-1)*Nf+Ni*Nq:it*Nf+Ni*Nq) = getForce(r, step, grid, ddq(:,it));
+function x0 = getStartingPoint(q0, q1, config, step, grid, Nq, Nf, N, dt)
+    x0 = zeros(N,Nq*2+Nf);
+    a = 2*(q1-q0)/(N-1).^2;
+    for n = 1:N
+        if n <= 1+(N-1)/2
+            q = q0 + a*(n-1).^2;
+            dq = 2*a*(n-1)/dt;
+            ddq = 2*a/dt^2;
+            r = state2robot(q, config);
+            f = getForce(r, step, grid, ddq);
+            x0(n,:) = [q', dq', f'];
+        else
+            q = q1 - a*(N-n).^2;
+            dq = 2*a*(N-n)/dt;
+            ddq = -2*a/dt^2;
+            r = state2robot(q, config);
+            f = getForce(r, step, grid, ddq);
+            x0(n,:) = [q', dq', f'];
+        end
     end
 end
 
-function [c, g] = cost0(x, r0, i, grid, Nq, Nf, Ni)
-    f = x(Ni*Nq+1:end);
-    c = 0*sum(f.^2);
-    g = 0*[zeros(Ni*Nq,1); 2*f];
+function [c, g] = cost0(x, r0, i, grid, Nq, Nf, N)
+    c = 0;
+    g = zeros(size(x));
+end
+
+function [c, g] = cost(x, r0, i, grid, Nq, Nf, N)
+    f = x(:,2*Nq+1:end);
+    c = sum(f.^2, 'all');
+    g = [zeros(N,Nq*2), 2*f];
     % TODO: switch to gripper adhesion
 end
 
-function [c, g] = cost(x, r0, i, grid, Nq, Nf, Ni)
-    f = x(Ni*Nq+1:end);
-    c = sum(f.^2);
-    g = [zeros(Ni*Nq,1); 2*f];
-    % TODO: switch to gripper adhesion
+function [c, g] = costGrip(x, r0, iStep, grid, Nq, Nf, N)
+    iF = mod(iStep, size(r0.gait.angles, 2))+1; % next step in gait cycle
+    feet = r0.vertices(:, r0.gait.feet(:,iF) > 0);    
+    
+    % Find normal vectors
+    Nvec = zeros(3,size(feet, 2));
+    for iFoot = 1:size(feet, 2)
+        foot = feet(:,iFoot);
+        Nvec(:,iFoot) = [-f(foot(1),foot(2),grid.dzdx,grid);...
+                       -f(foot(1),foot(2),grid.dzdy,grid); 1];
+        Nvec(:,iFoot) = Nvec(:,iFoot)/norm(Nvec(:,iFoot));
+    end
+    
+    Fnorm = zeros(N,size(feet,2));
+    Ftang = zeros(N,size(feet,2));
+    cost = zeros(N,1);
+    for n = 1:N
+        fvec = x(n,2*Nq+1:end);
+        F = reshape(fvec, 3, []);    
+        for iFoot = 1:size(feet,2)
+            Fnorm(n,iFoot) = -F(:,iFoot)'*Nvec(:,iFoot);
+            Ftang(n,iFoot) = norm(cross(F(:,iFoot),Nvec(:,iFoot)));
+            Fnorm(n,iFoot) = max(0, Fnorm(n,iFoot));
+            cost(n) = gripperMargin(Fnorm(n,:), Ftang(n,:));
+        end
+    end
+    c = max(cost);
+    g = cost; % not actually the gradient
 end
 
-function [c,ceq] = constraints(x, r0, r1, i, grid, Nq, Nf, Ni, t)
-    q = reshape(x(1:Ni*Nq), Nq, Ni);
-    f = reshape(x(Ni*Nq+1:end), Nf, Ni);
+function [c,ceq] = constraints(x, r0, r1, iStep, grid, Nq, Nf, N, dt)
+    q = x(:,1:Nq);
+    dq = x(:,Nq+1:2*Nq);
+    f = x(:,2*Nq+1:end);
+    ddq = zeros(N,6);
+    for n = 1:N
+        ddq(n,:) = robotDynamics(q(n,:)', dq(n,:)', f(n,:)', r0.config, iStep);
+    end
     c = [];
-    ceq = [];%[q(:,1) - robot2state(r0); q(:,end) - robot2state(r1)];
-    [~, ddq] = computeDerivatives(zeros(Nq,1), q, t);
-    for it = 1:Ni
-        [ck, ceqk] = constraintsKinematic(q(:,it), r0, i, grid);
-        ceqd = constraintsDynamic(q(:,it), f(:,it), r0.config, i, grid, ddq(:,it));
+    % TODO: include all indices of q (full dynamics)
+    ceq = constraintsDynamic(q(:,1:3), dq(:,1:3), ddq, f, r0.config, iStep, grid, dt);
+%     ceq = [q(1,:)' - robot2state(r0); q(end,:)' - robot2state(r1); dq(1,:)'; dq(end,:)'; ceqd];
+    for n = 1:N
+        [ck, ceqk] = constraintsKinematic(q(n,:)', r0, iStep, grid);
         c = [c; ck];
-        ceq = [ceq; ceqk; ceqd];
+        ceq = [ceq; ceqk];
     end
 end
 
-function [c,ceq] = constraintsKinematic(x, r0, i, grid)
+function [c,ceq] = constraintsKinematic(x, r0, iStep, grid)
     r = state2robot(x, r0.config);
-    stanceFeet = r.vertices(:, r0.gait.feet(:,i) > 0);
-    fixedFeet = r0.vertices(:, r0.gait.feet(:,i) > 0);
+    stanceFeet = r.vertices(:, r0.gait.feet(:,iStep) > 0);
+    fixedFeet = r0.vertices(:, r0.gait.feet(:,iStep) > 0);
     ceq = [x(4:6)'*x(7:9);
            norm(x(4:6))-1;
            norm(x(7:9))-1;
@@ -100,76 +149,25 @@ function [c,ceq] = constraintsKinematic(x, r0, i, grid)
     c = [dz; -B(3)];
 end
 
-function ceq = constraintsDynamic(q, fvec, config, count, grid, ddq)
-    robot = state2robot(q, config);
-
-    GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
-    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
-    
-    i = mod(count, size(robot.gait.angles, 2))+1;
-    feet = robot.vertices(:, robot.gait.feet(:,i) > 0);
-    r = feet - robot.origin;
-    
-    % Find normal vectors
-    N = zeros(3,size(feet, 2));
-    for iFoot = 1:size(feet, 2)
-        foot = feet(:,iFoot);
-        N(:,iFoot) = [-f(foot(1),foot(2),grid.dzdx,grid);...
-                       -f(foot(1),foot(2),grid.dzdy,grid); 1];
-        N(:,iFoot) = N(:,iFoot)/norm(N(:,iFoot));
-    end
-    
-    % Find contact forces
-    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
-    Aeq_torque = zeros(3,3*size(feet,2));
-    for iFoot = 1:size(feet,2)
-        ri = r(:,iFoot);
-        Aeq_torque(:,iFoot*3-2:iFoot*3) = [0, ri(3), -ri(2);
-                                           -ri(3), 0, ri(1);
-                                           ri(2), -ri(1), 0];
-    end
-    Aeq = [repmat(eye(3), 1, size(feet,2)); Aeq_torque];
-    beq = [-G+ddq(1:3)*WEIGHT;zeros(3,1)];
-    ceq = Aeq*fvec - beq;
-    F = [reshape(fvec, 3, []), G];
-    
-    % Decompose forces into components
-    Fnorm = zeros(1,size(feet,2));
-    Ftang = zeros(1,size(feet,2));
-    for iFoot = 1:size(feet,2)
-        Fnorm(iFoot) = -F(:,iFoot)'*N(:,iFoot);
-        Ftang(iFoot) = norm(cross(F(:,iFoot),N(:,iFoot)));
-    end
-    
-    % Compute torques
-    joints = robot.vertices - robot.links;
-    T = zeros(size(joints));
-    for iJoint = 1:size(robot.vertices, 2)
-        nChildren = find([robot.config.parents(iJoint+1:end),0]<iJoint, 1);
-        iChildren = iJoint:iJoint+nChildren-1;
-        iFeetBool = double(robot.gait.feet(:,i)' > 0);
-        iFeetBool(iChildren) = -iFeetBool(iChildren);
-        iFeet = find(iFeetBool(iFeetBool~=0) < 0);
-        for iFoot = iFeet
-            rFoot = feet(:,iFoot)-joints(:,iJoint);
-            T(:, iJoint) = T(:, iJoint) + cross(rFoot, F(:,iFoot));
-        end
-    end
+function ceq = constraintsDynamic(q, dq, ddq, fvec, config, iStep, grid, dt)
+    torque = ddq(:,4:6);
+    ddq = ddq(:,1:3);
+    eom_dq = dq(2:end,:) - (dq(1:end-1,:) + dt*(ddq(2:end,:) + ddq(1:end-1,:))/2);
+    eom_q = q(2:end,:) - (q(1:end-1,:) + dt*(dq(2:end,:) + dq(1:end-1,:))/2);
+    ceq = [reshape(eom_dq, [], 1); reshape(eom_q, [], 1); reshape(torque, [], 1)];
 end
 
-function FRAMES = animateTrajectory(x, step, config, grid, Nq, Nf, Ni)
+function FRAMES = animateTrajectory(x, step, config, grid, Nq, Nf, N)
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
     WEIGHT = 5*9.81; % Magnitude of gravity force (N)
     figure('units','normalized','outerposition',[0 0 .3 1]);
     FRAMES = struct('cdata',{},'colormap',{});
-    q = reshape(x(1:Ni*Nq), Nq, Ni);
-    f = reshape(x(Ni*Nq+1:end), Nf, Ni);
-    for it = 1:Ni
+    for n = 1:N
         plotTerrain(grid);
-        r = state2robot(q(:,it), config);
+        r = state2robot(x(n,1:Nq)', config);
         plotRobot(r);
         G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
-        F = [reshape(f(:,it), 3, []), G];
+        F = [reshape(x(n,2*Nq+1:end)', 3, []), G];
         plotForces(r, F, step-1, 'g', 0.016);
         drawnow();
         FRAMES(length(FRAMES)+1) = getframe(gcf);
@@ -178,7 +176,8 @@ end
 
 function [Fvec, T] = getForce(robot, count, grid, ddq)
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
-    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
+    MASS = 5; % Mass of robot (kg)
+    g = 9.81; % Gravity (m/s^2)
     
     i = mod(count, size(robot.gait.angles, 2))+1;
     feet = robot.vertices(:, robot.gait.feet(:,i) > 0);
@@ -194,7 +193,7 @@ function [Fvec, T] = getForce(robot, count, grid, ddq)
     end
     
     % Find contact forces
-    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
+    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*g*MASS;
     Aeq_torque = zeros(3,3*size(feet,2));
     for iFoot = 1:size(feet,2)
         ri = r(:,iFoot);
@@ -205,7 +204,7 @@ function [Fvec, T] = getForce(robot, count, grid, ddq)
     X0 = robot2state(robot);
     Aeq = [repmat(eye(3), 1, size(feet,2)); Aeq_torque];
     Aeq = [zeros(6,length(X0)), Aeq];
-    beq = [-G+ddq(1:3)*WEIGHT;zeros(3,1)];
+    beq = [-G+ddq(1:3)*MASS;zeros(3,1)];
     [F0,~,~,~] = quasiStaticDynamics(robot, count, grid);
     F0 = reshape(F0(:,1:end-1), [], 1);
     lb = [X0; -ones(size(F0))*Inf];
@@ -241,7 +240,28 @@ function [Fvec, T] = getForce(robot, count, grid, ddq)
     end
 end
 
-function [dq, ddq] = computeDerivatives(dq0, q, t)
-    dq = [dq0,diff(q,1,2)./diff(t,1)];
-    ddq = [diff(dq,1,2)./diff(t,1), dq*0];
+function ddq = robotDynamics(q, dq, fvec, config, iStep)
+    robot = state2robot(q, config);
+    GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
+    MASS = 5; % Mass of robot (kg)
+    g = 9.81; % Gravity (m/s^2)
+    
+    i = mod(iStep, size(robot.gait.angles, 2))+1;
+    feet = robot.vertices(:, robot.gait.feet(:,i) > 0);
+    r = feet - robot.origin;
+    
+    % Find contact forces
+    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*MASS*g;
+    Aeq_torque = zeros(3,3*size(feet,2));
+    for iFoot = 1:size(feet,2)
+        ri = r(:,iFoot);
+        Aeq_torque(:,iFoot*3-2:iFoot*3) = [0, ri(3), -ri(2);
+                                           -ri(3), 0, ri(1);
+                                           ri(2), -ri(1), 0];
+    end
+    Aeq = repmat(eye(3), 1, size(feet,2));
+    beq = -G;
+    ddq = (Aeq*fvec - beq)/MASS;
+    torque = Aeq_torque*fvec;
+    ddq = [ddq; torque];
 end

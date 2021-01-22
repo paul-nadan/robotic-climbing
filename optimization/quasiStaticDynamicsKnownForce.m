@@ -1,5 +1,5 @@
 % Compute force components and torques from contact forces
-function [F, Fnorm, Ftang, T] = quasiStaticDynamicsKnownForce(robot, count, F, grid)
+function [F, Fnorm, Ftang, T, N] = quasiStaticDynamicsKnownForce(robot, count, F, grid)
     
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
     WEIGHT = 5*9.81; % Magnitude of gravity force (N)
