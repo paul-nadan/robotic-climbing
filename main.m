@@ -67,8 +67,6 @@ PLOT_SCORES = [1,2,3,4,6];
 % PLOT_COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
 SWEEP1 = 0.15:0.02:0.25; % values for parameter being swept
 SWEEP2 = 0.25:0.02:0.35;%0.1:0.05:0.3;
-% SWEEP1 = 0.21;
-% SWEEP2 = 0.31;
 AXIS_LABELS = {'Back Leg Length (m)', 'Front Leg Length (m)'};
 % AXIS_LABELS = {'Terrain Difficulty', 'Configuration'};
 SAMPLES = 10; % number of duplicate samples to average at each value
@@ -149,7 +147,7 @@ function scores = getScores(robot, lastRobot, i, grid)
 %     pathLength = norm(robot.origin - lastRobot.origin);
     distance = robot.origin(2) - lastRobot.origin(2);
 %     scores = [~robot.fail, normalForce, tangentForce, sum(Fmag.*Fmag), max(ratioMargin), max(magnitudeMargin), margin, torque, distance];
-    scores = [~robot.fail, margin, NaN, NaN, torque, distance];
+    scores = [~robot.fail, max(magnitudeMargin), NaN, NaN, torque, distance];
 end
 
 function scores = averageScores(rawScores, robots)
@@ -159,6 +157,7 @@ function scores = averageScores(rawScores, robots)
 %     scores = std(rawScores, 0, 3, 'omitnan');
     scores(:,:,3) = (1-scores(:,:,1))./scores(:,:,6);
     scores(:,:,4) = scores(:,:,2)./scores(:,:,6);
+    scores(:,:,2) = max(rawScores(:,:,:,2), [], 3, 'omitnan');
 end
 
 function cost = getCost(robot, lastRobot, i, grid)

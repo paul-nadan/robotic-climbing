@@ -44,7 +44,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
     end
     
     % Iterate over parameters
-    workers = (N1 > 1)*N1*SIMULATE;
+    workers = 4;%(N1 > 1)*N1*SIMULATE;
     parfor (i1 = 1:N1,workers)
 %     for i1 = 1:N1
         for i2 = 1:N2
@@ -119,7 +119,9 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                 end
 
                 % Evaluate iteration results
-                rawScores(i1, i2, i3, :) = mean(stepScores, 1, 'omitnan');
+                tempScores = mean(stepScores, 1, 'omitnan');
+                tempScores(2) = max(stepScores(:,2), [], 'omitnan');
+                rawScores(i1, i2, i3, :) = tempScores;
                 if IGNORE_FAILS && robot.fail
                     rawScores(i1, i2, i3, :) = NaN;
                 end

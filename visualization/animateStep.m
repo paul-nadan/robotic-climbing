@@ -1,9 +1,9 @@
 function animateStep(r1, r2, dt, count, grid)
     i = mod(count-1, size(r1.gait.angles, 2))+1;
     global FRAMES RECORD ANIMATE
-    if ~ANIMATE && ~RECORD
-        return
-    end
+%     if ~ANIMATE && ~RECORD
+%         return
+%     end
     dBody = cell(1,length(r1.bodies));
     for iBody = 1:length(r1.bodies)
         dBody{iBody} = r2.bodies{iBody} - r1.bodies{iBody};

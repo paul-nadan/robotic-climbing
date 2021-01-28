@@ -18,6 +18,7 @@ function config = quadruped(dof, w, h, L, trot, horizon)
         config.gait.feet = zeros(sum(config.count), 4); % foot contacts
         config.gait.dx = 0.05*[0 0 0 0; 1 1 1 1; 0 0 0 0];
     end
+    config.gait.buffer = zeros(size(config.gait.angles));
     x = [1;0;0]; % right
     y = [0;1;0]; % forward
     z = [0;0;1]; % up
@@ -25,19 +26,21 @@ function config = quadruped(dof, w, h, L, trot, horizon)
     feet = [1, 0, 1, 0];
     feet2 = [1 3 2 4];
     gait2 = [3/4, 1/4, -1/4, -3/4]*40;
+    buffer = [15, 0, 0, 0];
     for iLeg = 1:4
         iJoint = sum(dof(1:iLeg-1))+1;
         config.joints(:,1,iJoint) = config.bodies{1}(:,iLeg); % shoulder
         config.joints(:,2,iJoint) = z; % shoulder yaw axis
         config.joints(:,2,iJoint+1) = y; % shoulder roll axis
         config.joints(:,3,iJoint+1) = x*L{dof(iLeg)-1}(1); % link 1
-        config.limits(iJoint:iJoint+1,:) = [-60, 60; -45, 90];
+        config.limits(iJoint:iJoint+1,:) = [-60-15, 60+15; -45, 90];
         config.gait.angles(iJoint+1,:) = 45;
         if trot
             config.gait.angles(iJoint,:) = [gait(iLeg), -gait(iLeg)];
             config.gait.feet(iJoint+1,:) = [feet(iLeg), ~feet(iLeg)];
         else
             config.gait.angles(iJoint, :) = circshift(gait2, feet2(iLeg)-1);
+            config.gait.buffer(iJoint, :) = circshift(buffer, feet2(iLeg)-1);
             config.gait.feet(iJoint+1,:) = iLeg~=feet2;
         end
         if dof(iLeg) == 3

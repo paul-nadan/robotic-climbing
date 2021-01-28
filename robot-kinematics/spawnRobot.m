@@ -4,5 +4,6 @@ function robot = spawnRobot(origin, R0, config, grid)
     body = [robot.bodies{:}];
     dz = config.clearance + f(body(1, :), body(2, :), grid.z, grid) - body(3, :)+0.1;
     robot = moveRobot(robot, [0;0;max(dz)], eye(3));
+    robot.config.threshold = 20;
     robot = step(robot, 0, grid);
 end

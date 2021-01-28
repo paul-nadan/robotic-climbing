@@ -1,5 +1,9 @@
 % Compute new robot state given previous state and current step number
 function r = step2(r0, count0, grid, skip)
+%     if count0 >= 4
+%         r0.config.limits([3,6],:) = [10,150;10,150];
+%         r0.config.limits([7,9],:) = [-75,75;-75,75];
+%     end
     horizon = r0.gait.horizon;
     weights = [1; 1];
     if horizon == -1
@@ -9,6 +13,8 @@ function r = step2(r0, count0, grid, skip)
     end
     weights = weights(1:min(length(weights), horizon));
     count = count0:count0+horizon-1;
+%     oneleg = skip > 2;
+%     skip = mod(skip, 3);
     
     % Adjust heading
     i = mod(count-1, size(r0.gait.angles, 2))+1;
@@ -26,6 +32,7 @@ function r = step2(r0, count0, grid, skip)
     Aeq = zeros(horizon, length(Xn));
     beq = zeros(horizon, 1);
     delta = norm(r0.gait.dx(1:2,i(1)));
+    
     lb = repmat([r0.origin(1:2)-delta;-Inf;-1;-1;-1;-1;-1;-1;r0.config.limits(:,1)], horizon, 1);
     ub = repmat([r0.origin(1:2)+delta;Inf;1;1;1;1;1;1;r0.config.limits(:,2)], horizon, 1);
     for iStep = 1:horizon
@@ -36,6 +43,8 @@ function r = step2(r0, count0, grid, skip)
         Aeq(iStep, (iStep-1)*nX+4:(iStep-1)*nX+6) = X0(7:9)';
         lb(ix0+1:ix0+2) = rd(iStep+1).origin(1:2)-delta;
         ub(ix0+1:ix0+2) = rd(iStep+1).origin(1:2)+delta;
+        lb(ix0+10:ix0+nX) = lb(ix0+10:ix0+nX) + r0.config.gait.buffer(:,i(iStep));
+        ub(ix0+10:ix0+nX) = ub(ix0+10:ix0+nX) - r0.config.gait.buffer(:,i(iStep));
     end
     
     % Seed solver with previous horizon results
@@ -43,6 +52,11 @@ function r = step2(r0, count0, grid, skip)
         h = min(horizon*nX, length(r0.seed));
         Xn(1:h) = r0.seed(1:h);
     end
+    
+%     if oneleg
+%         mask = [zeros(1,9), 1,1,1, 2,2,2, 3,3, 4,4] ~= i(1);
+%         
+%     end
     
     % Preliminary force prediction
 %     [F0,~,~,~] = quasiStaticDynamics(state2robot(Xn(1:length(X0)),r0.config), count0, grid);
@@ -55,10 +69,9 @@ function r = step2(r0, count0, grid, skip)
     options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
         'Algorithm','sqp','ConstraintTolerance',1e-4,...
         'Display','off','SpecifyObjectiveGradient',true, 'CheckGradients', false, 'FiniteDifferenceType', 'central');
-    [xFree,~,~,outputFree] = fmincon(@(x)costFull(x, []),Xn,[],[],...
-        Aeq,beq,lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, 0, skip),options);
+    [xFree,~,flagFree,outputFree] = fmincon(@(x)costFull(x, []),Xn,[],[],...
+        [],[],lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, 0, skip),options);
     Xn = xFree(1:length(Xn));
-    
     % Full force prediction
     F0 = [];
     C0 = [];
@@ -76,21 +89,21 @@ function r = step2(r0, count0, grid, skip)
     Aeq = [Aeq, zeros(horizon, nFC)];
     lb = [lb; zeros(nFC, 1)-Inf];
     ub = [ub; zeros(nFC, 1)+Inf];
-    [x,~,~,output] = fmincon(@(x)costFull(x, weights),[Xn;F0;C0],[],[],...
-        Aeq,beq,lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip),options);
-
+    [x,~,flag,~] = fmincon(@(x)costFull(x, weights),[Xn;F0;C0],[],[],...
+        [],[],lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip),options);
+    
     % Fallback to preliminary solution
-    if length(weights)==1&&max(C0)<=1&&count0>0&&output.constrviolation > options.ConstraintTolerance
+    if length(weights)==1&&max(C0)<=1&&count0>0&&flag<=0
         fprintf('Falling back on no-cost solution\n');
         x = [Xn; F0; C0];
-        output = outputFree;
+        flag = flagFree;
     end
     
     % Post-processing and fallback to shorter horizon
     r = state2robot(x(1:nX), r0.config);
     r.skip = skip;
     r.F = reshape(x(end-nFC+1:end-nFC+length(F0)/length(weights)), 3, []);
-    r.fail = count0>0&&output.constrviolation > options.ConstraintTolerance;
+    r.fail = count0>0&&flag<=0;
     if r.fail
         fprintf('\n');
 %         disp(output.message);
@@ -113,6 +126,16 @@ function r = step2(r0, count0, grid, skip)
             fprintf('Skipping step\n');
             r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
             r = step2(r0, count0, grid, skip+1);
+%         elseif skip == 2% && skip > 1 && skip <= 4
+%             fprintf('One-legged step\n');
+%             r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
+%             r = step2(r0, count0, grid, skip+1);
+        elseif r0.config.threshold < 35
+            fprintf('Raising threshold: %d\n', r0.config.threshold+1);
+            r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
+            r0.config.threshold = r0.config.threshold + 1;
+            r = step2(r0, count0, grid, 0);
+            r.config.threshold = r0.config.threshold - 1;
         else
             fprintf('Trying global optimization\n');
             [x,~,flag,~,~] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid, weights, 0);
@@ -243,7 +266,7 @@ function costs = costGripper(robot, xF, i, grid)
     end
     
     % Compute margin
-    [~, c1, c2] = gripperMargin(Fnorm, Ftang);
+    [~, c1, c2] = gripperMargin(Fnorm, Ftang, robot.config.threshold);
     costs = [c1, c2];
 end
 
@@ -253,12 +276,17 @@ function [x,cost,flag,output,solutions] = optimizeGlobal(Xn, F0, C0, rd, lb, ub,
     problem = createOptimProblem('fmincon','x0',[Xn;F0;C0],...
         'objective',@(x)costFull(x, weights),'lb',lb,'ub',ub,'Aeq',Aeq,'beq',beq,'nonlcon',...
         @(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip),'options',options);
+    
+%     problem = createOptimProblem('fmincon','x0',Xn,...
+%         'objective',@(x)costFull(x, []),'lb',lb(1:length(Xn)),'ub',ub(1:length(Xn)),'Aeq',Aeq,'beq',beq,'nonlcon',...
+%         @(x)constraintsFull(x, rd, i, count0>0, grid, 0, skip),'options',options);
+    
     [x,cost,flag,output,solutions] = run(gs,problem);
     output.constrviolation = 0;
 end
 
 function stop = stopIfConverged(optimValues,~)
-    stop = ~isempty(optimValues.bestfval) && optimValues.bestfval <= 1 ...
+    stop = ~isempty(optimValues.bestfval) && optimValues.bestfval <= 1+1e-5 ...
         && ~isempty(optimValues.localsolution.Exitflag) ...
         && optimValues.localsolution.Exitflag > 0;
 end
