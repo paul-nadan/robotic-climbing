@@ -26,8 +26,8 @@ q0 = robot2state(r1);
 q1 = robot2state(r2);
 % x0 = getStartingPoint(q0, q1, config, iStep, grid, Nq, Nf, N, dt);
 
-lb = [repmat(min(q0,q1)',N,1), zeros(N,Nq+Nf)-Inf];
-ub = [repmat(max(q0,q1)',N,1), zeros(N,Nq+Nf)+Inf];
+lb = [repmat(min(q0,q1)',N,1), zeros(N,Nq+Nf+1)-Inf];
+ub = [repmat(max(q0,q1)',N,1), zeros(N,Nq+Nf+1)+Inf];
 lb(1,1:2*Nq) = [q0', zeros(1,Nq)];
 ub(1,1:2*Nq) = [q0', zeros(1,Nq)];
 lb(end,1:2*Nq) = [q1', zeros(1,Nq)];
@@ -39,19 +39,19 @@ ub(end,1:2*Nq) = [q1', zeros(1,Nq)];
 %         'Algorithm','sqp','ConstraintTolerance',1e-4,...
 %         'Display','iter','SpecifyObjectiveGradient',true, 'CheckGradients', false, 'FiniteDifferenceType', 'central');
 % [x1,~,~,output] = fmincon(@(x)cost0(x,r1,iStep,grid,Nq,Nf,N),x0,[],[],...
-%         [],[],lb,ub,@(x)constraints(x,r1,r2,iStep,grid,Nq,Nf,N,dt),options);
-% % 
-options = optimoptions('fmincon','MaxFunctionEvaluations',2e4,...
+%         [],[],lb,ub,@(x)constraints(x,r1,r2,iStep,grid,Nq,Nf,N,dt,0),options);
+
+options = optimoptions('fmincon','MaxFunctionEvaluations',1e6,...
         'Algorithm','sqp','ConstraintTolerance',1e-4,...
-        'Display','iter','SpecifyObjectiveGradient',false, 'FiniteDifferenceType', 'central');
-[x,~,~,output] = fmincon(@(x)costGrip(x,r1,iStep,grid,Nq,Nf,N),x1,[],[],...
-        [],[],lb,ub,@(x)constraints(x,r1,r2,iStep,grid,Nq,Nf,N,dt),options);
+        'Display','iter','SpecifyObjectiveGradient',true, 'FiniteDifferenceType', 'central');
+[x,~,~,output] = fmincon(@(x)costMax(x),x1,[],[],...
+        [],[],lb,ub,@(x)constraints(x,r1,r2,iStep,grid,Nq,Nf,N,dt,1),options);  
 
 [cFinal, costFinal] = costGrip(x, r1, iStep, grid, Nq, Nf, N);
-FRAMES = animateTrajectory(x, iStep, config, grid, Nq, Nf, N);
+FRAMES = animateTrajectory(x(:,1:end-1), iStep, config, grid, Nq, Nf, N);
 
 function x0 = getStartingPoint(q0, q1, config, step, grid, Nq, Nf, N, dt)
-    x0 = zeros(N,Nq*2+Nf);
+    x0 = zeros(N,Nq*2+Nf+1);
     a = 2*(q1-q0)/(N-1).^2;
     for n = 1:N
         if n <= 1+(N-1)/2
@@ -60,15 +60,19 @@ function x0 = getStartingPoint(q0, q1, config, step, grid, Nq, Nf, N, dt)
             ddq = 2*a/dt^2;
             r = state2robot(q, config);
             f = getForce(r, step, grid, ddq);
-            x0(n,:) = [q', dq', f'];
+            x0(n,1:end-1) = [q', dq', f'];
         else
             q = q1 - a*(N-n).^2;
             dq = 2*a*(N-n)/dt;
             ddq = -2*a/dt^2;
             r = state2robot(q, config);
             f = getForce(r, step, grid, ddq);
-            x0(n,:) = [q', dq', f'];
+            x0(n,1:end-1) = [q', dq', f'];
         end
+%         q = q0 + (q1-q0)*(n-1)/(N-1);
+%         dq = (q1-q0)/(N-1)/dt;
+%         f = zeros(9,1);
+%         x0(n,1:end-1) = [q', dq', f'];
     end
 end
 
@@ -84,7 +88,13 @@ function [c, g] = cost(x, r0, i, grid, Nq, Nf, N)
     % TODO: switch to gripper adhesion
 end
 
-function [c, g] = costGrip(x, r0, iStep, grid, Nq, Nf, N)
+function [c, g] = costMax(x)
+    c = x(1,end);
+    g = zeros(size(x));
+    g(1,end) = 1;
+end
+
+function [c, cvec] = costGrip(x, r0, iStep, grid, Nq, Nf, N)
     iF = mod(iStep, size(r0.gait.angles, 2))+1; % next step in gait cycle
     feet = r0.vertices(:, r0.gait.feet(:,iF) > 0);    
     
@@ -99,25 +109,26 @@ function [c, g] = costGrip(x, r0, iStep, grid, Nq, Nf, N)
     
     Fnorm = zeros(N,size(feet,2));
     Ftang = zeros(N,size(feet,2));
-    cost = zeros(N,1);
+    cost = zeros(N,size(feet,2)*2);
     for n = 1:N
-        fvec = x(n,2*Nq+1:end);
-        F = reshape(fvec, 3, []);    
+        fvec = x(n,2*Nq+1:end-1);
+        F = reshape(fvec, 3, []);
         for iFoot = 1:size(feet,2)
             Fnorm(n,iFoot) = -F(:,iFoot)'*Nvec(:,iFoot);
             Ftang(n,iFoot) = norm(cross(F(:,iFoot),Nvec(:,iFoot)));
             Fnorm(n,iFoot) = max(0, Fnorm(n,iFoot));
-            cost(n) = gripperMargin(Fnorm(n,:), Ftang(n,:));
+            [~, c1, c2] = gripperMargin(Fnorm(n,:), Ftang(n,:));
+            cost(n,:) = [c1,c2];
         end
     end
-    c = max(cost);
-    g = cost; % not actually the gradient
+    cvec = reshape(cost, [], 1);
+    c = max(cvec);
 end
 
-function [c,ceq] = constraints(x, r0, r1, iStep, grid, Nq, Nf, N, dt)
+function [c,ceq] = constraints(x, r0, r1, iStep, grid, Nq, Nf, N, dt, optimize)
     q = x(:,1:Nq);
     dq = x(:,Nq+1:2*Nq);
-    f = x(:,2*Nq+1:end);
+    f = x(:,2*Nq+1:end-1);
     ddq = zeros(N,6);
     for n = 1:N
         ddq(n,:) = robotDynamics(q(n,:)', dq(n,:)', f(n,:)', r0.config, iStep);
@@ -130,6 +141,10 @@ function [c,ceq] = constraints(x, r0, r1, iStep, grid, Nq, Nf, N, dt)
         [ck, ceqk] = constraintsKinematic(q(n,:)', r0, iStep, grid);
         c = [c; ck];
         ceq = [ceq; ceqk];
+    end
+    if optimize
+        [cmax, cvec] = costGrip(x, r0, iStep, grid, Nq, Nf, N);
+        c = [c; cvec-x(1,end)];
     end
 end
 
@@ -165,6 +180,7 @@ function FRAMES = animateTrajectory(x, step, config, grid, Nq, Nf, N)
     for n = 1:N
         plotTerrain(grid);
         r = state2robot(x(n,1:Nq)', config);
+        r.fail = 0;
         plotRobot(r);
         G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
         F = [reshape(x(n,2*Nq+1:end)', 3, []), G];

@@ -106,7 +106,7 @@ footForces = {};
 footForces{1} = -A_sub(1:3,:)'*lambda(1:3);
 footForces{1}(end-5:end-3)
 footForces{2} = -A_sub(4:6,:)'*lambda(4:6);
-footpiugfr1`Forces{2}(end-5:end-3)
+footForces{2}(end-5:end-3)
 footForces{3} = -A_sub(7:9,:)'*lambda(7:9);
 footForces{3}(end-5:end-3)
 
