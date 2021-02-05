@@ -1,11 +1,14 @@
 % Compute new robot state given previous state and current step number
 function r = step2(r0, count0, grid, skip)
+    global x_optimal f_optimal
+    x_optimal = 0;
+    f_optimal = -1;
 %     if count0 >= 4
 %         r0.config.limits([3,6],:) = [10,150;10,150];
 %         r0.config.limits([7,9],:) = [-75,75;-75,75];
 %     end
     horizon = r0.gait.horizon;
-    weights = [1; 1];
+    weights = [1; 1; 1; 1];
     if horizon == -1
         weights = 1;
         horizon = 2;
@@ -47,11 +50,6 @@ function r = step2(r0, count0, grid, skip)
         ub(ix0+10:ix0+nX) = ub(ix0+10:ix0+nX) - r0.config.gait.buffer(:,i(iStep));
     end
     
-    % Seed solver with previous horizon results
-    if isfield(r0, 'seed')
-        h = min(horizon*nX, length(r0.seed));
-        Xn(1:h) = r0.seed(1:h);
-    end
     
 %     if oneleg
 %         mask = [zeros(1,9), 1,1,1, 2,2,2, 3,3, 4,4] ~= i(1);
@@ -68,10 +66,32 @@ function r = step2(r0, count0, grid, skip)
     % Preliminary solution with constant cost
     options = optimoptions('fmincon','MaxFunctionEvaluations',1e4,...
         'Algorithm','sqp','ConstraintTolerance',1e-4,...
-        'Display','off','SpecifyObjectiveGradient',true, 'CheckGradients', false, 'FiniteDifferenceType', 'central');
+        'Display','none','SpecifyObjectiveGradient',true, ...
+        'CheckGradients', false, 'FiniteDifferenceType', 'central', ...
+        'OutputFcn', @saveBest);
     [xFree,~,flagFree,outputFree] = fmincon(@(x)costFull(x, []),Xn,[],[],...
         [],[],lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, 0, skip),options);
     Xn = xFree(1:length(Xn));
+    
+    % Seed solver with previous horizon results
+    if isfield(r0, 'seed')
+        h = min(horizon*nX, length(r0.seed));
+        if h == length(Xn) && ~skip
+            Xn(1:h) = r0.seed(1:h);
+            for iStep = 1:horizon
+                ix0 = nX*(iStep-1);
+                lb(ix0+1:ix0+2) = Xn(ix0+1:ix0+2)-delta;
+                ub(ix0+1:ix0+2) = Xn(ix0+1:ix0+2)+delta;
+            end
+%             plotTerrain(grid);
+%             plotRobot(r0);
+%             for iStep = 1:length(r0.seed)/nX
+%                 r = state2robot(r0.seed(nX*(iStep-1)+1:nX*iStep), r0.config);
+%                 plotRobot(r);
+%             end
+%             drawnow()
+        end
+    end
     % Full force prediction
     F0 = [];
     C0 = [];
@@ -89,9 +109,18 @@ function r = step2(r0, count0, grid, skip)
     Aeq = [Aeq, zeros(horizon, nFC)];
     lb = [lb; zeros(nFC, 1)-Inf];
     ub = [ub; zeros(nFC, 1)+Inf];
-    [x,~,flag,~] = fmincon(@(x)costFull(x, weights),[Xn;F0;C0],[],[],...
+    x_optimal = 0;
+    f_optimal = -1;
+    [x,~,flag,output] = fmincon(@(x)costFull(x, weights),[Xn;F0;C0],[],[],...
         [],[],lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip),options);
-    
+    if flag <= 0 && f_optimal ~= -1
+        x = x_optimal;
+        flag = 1;
+        fprintf('Overwriting infeasible solution\n');
+    end
+    if flag == 0 && output.constrviolation < options.ConstraintTolerance
+        flag = 1;
+    end
     % Fallback to preliminary solution
     if length(weights)==1&&max(C0)<=1&&count0>0&&flag<=0
         fprintf('Falling back on no-cost solution\n');
@@ -110,7 +139,7 @@ function r = step2(r0, count0, grid, skip)
         if isfield(r0, 'seed')
             r.seed = r0.seed;
         end
-        if length(weights) > 1
+        if 0 && length(weights) > 1
             fprintf('Trying shorter horizon: %d\n', -1);
             r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
             r0.gait.horizon = -1;
@@ -163,8 +192,8 @@ end
 
 % Satisfy all constraints for all steps in simulation horizon
 function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon, skip)    
-    iF = mod(i(1)+skip, size(rd(1).gait.angles, 2))+1; % next step in gait cycle
-    nF = 3*sum(rd(2).gait.feet(:,iF) > 0); % number of force variables
+    iF = mod(i+skip, size(rd(1).gait.angles, 2))+1; % next step in gait cycle
+    nF = 3*sum(rd(2).gait.feet(:,iF(1)) > 0); % number of force variables
     X = x(1:end-costHorizon*(1+nF)); % state variables
     xF = x(end-costHorizon*(1+nF)+1:end); % force variables
     xC = x(end-costHorizon+1:end); % cost variables
@@ -177,12 +206,19 @@ function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon, skip)
         xi = X(nX*(iStep-1)+1:nX*iStep);
         r = state2robot(xi, rd(1).config);
         [cX,ceqX] = constraintsKinematic(xi, r, r0, i(iStep), stepping, grid);
+        newFeet = r.vertices;
+        if iStep > 1
+            stance = r0.gait.feet(:,i(iStep)) > 0;
+            ceqStance = oldFeet(:, stance) - newFeet(:, stance);
+            ceq = [ceq; reshape(ceqStance, [], 1)];
+        end
+        oldFeet = newFeet;
         c = [c; cX];
         ceq = [ceq; ceqX];
         if iStep <= costHorizon
             xFi = xF(nF*(iStep-1)+1:nF*iStep);
             xCi = xC(iStep);
-            ceqF = constraintsForce(r, xFi, iF);
+            ceqF = constraintsForce(r, xFi, iF(iStep));
             cC = constraintsCost(r, xFi, xCi, i(iStep)+skip, grid, 0 > 1);
             c = [c; cC];
             ceq = [ceq; ceqF];
@@ -289,4 +325,13 @@ function stop = stopIfConverged(optimValues,~)
     stop = ~isempty(optimValues.bestfval) && optimValues.bestfval <= 1+1e-5 ...
         && ~isempty(optimValues.localsolution.Exitflag) ...
         && optimValues.localsolution.Exitflag > 0;
+end
+
+function stop = saveBest(x,optimValues,~)
+    global x_optimal f_optimal
+    if (f_optimal == -1 || optimValues.fval < f_optimal) && optimValues.constrviolation < 1e-4
+        x_optimal = x;
+        f_optimal = optimValues.fval;
+    end
+    stop = 0;
 end

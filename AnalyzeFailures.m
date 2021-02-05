@@ -1,6 +1,6 @@
-x = 5;
+x = 4;
 y = 1;
-n = 4;
+n = 3;
 solve = ~~1;
 
 global PLOT ANIMATE RECORD
@@ -10,7 +10,7 @@ RECORD = 0;
 
 seed = seeds(x, y, n);
 if solve
-    [meanScores1, rawScores1, seeds1, robots1] = simulate(@getConfig, ...
+    [meanScores1, rawScores1, allScores1, seeds1, robots1] = simulate(@getConfig, ...
         @getTerrain, @getScores, @averageScores, SWEEP1(x), SWEEP2(y), 1, STEPS, ...
         TIME_STEP, ABORT_STRIKES, IGNORE_FAILS, seed, SCORES, 0);
     robots1 = robots1{1,1,1};
@@ -47,7 +47,7 @@ disp([robots1.skip]');
 function config = getConfig(var1, var2)
     configs = {[2,2,2,2], [3,2,2,2], [3,3,2,2], [3,3,3,2], [3,3,3,3]};
     config = quadruped(configs{3}, ...
-        0.1, 0.3, {var1, [var2/2, var2/2]}, 0, 2);
+        0.1, 0.3, {var1, [var2/2, var2/2]}, 0, 3);
 %         0.1, 0.3, {var1, var2}, 0, 2);
 end
 

@@ -8,7 +8,7 @@ function plotRobot(r)
         body = r.bodies{iBody};
         fill3(body(1,:),-body(3,:), body(2,:), 'r');
     end
-    if r.fail
+    if isfield(r, 'fail') && r.fail
         plotPoints(r.vertices(:,sum(r.gait.feet, 2)>0), 'r.');        
     else
         plotPoints(r.vertices(:,sum(r.gait.feet, 2)>0), 'b.');

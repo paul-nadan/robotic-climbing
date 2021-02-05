@@ -63,19 +63,21 @@ PLOT = ~~0; % flag to plot final robot condition and path
 SEED = 42; % set the terrain seed, -1 for a random seed
 % SCORES = {'Success Rate', 'Normal', 'Tangential', '|F|^2', 'Rat Mgn', 'Mag Mgn', 'Cost', 'Torque', 'Distance', 'Solve Time'}; % output variable names
 SCORES = {'Success Rate', 'Cost', 'Failures Per Meter', 'Cost Per Meter', 'Torque', 'Distance', 'Solve Time'}; % output variable names
-PLOT_SCORES = [1,2,3,4,6];
+PLOT_SCORES = [1,2,3,4,5,6];
 % PLOT_COLORS = {'r', [1 .5 0], [0 .7 0], 'b', [.5 0 .5]};
-SWEEP1 = 0.15:0.02:0.25; % values for parameter being swept
-SWEEP2 = 0.25:0.02:0.35;%0.1:0.05:0.3;
+SWEEP1 = 0.1:0.05:0.35; % values for parameter being swept
+SWEEP2 = 0.1:0.05:0.35;
+% SWEEP1 = 0.15:.02:.25; % values for parameter being swept
+% SWEEP2 = 0.25:.02:.35;
 AXIS_LABELS = {'Back Leg Length (m)', 'Front Leg Length (m)'};
 % AXIS_LABELS = {'Terrain Difficulty', 'Configuration'};
 SAMPLES = 10; % number of duplicate samples to average at each value
-STEPS = 5; % number of robot steps to simulate per trial
+STEPS = 10; % number of robot steps to simulate per trial
 TIME_STEP = 0.25; % delay between frame updates for animation
 ABORT_STRIKES = 0; % aborts remaining samples after this number of failures
 IGNORE_FAILS = 0; % do not record any data from a failed trial
-REUSE_DATA = 0; % reuse previous simulation data in the workspace
-PLOT_ONLY = 0; % do not run the simulation
+REUSE_DATA = 1; % reuse previous simulation data in the workspace
+PLOT_ONLY = 1; % do not run the simulation
 OPTIMIZE = ~~0; % Perform an optimization instead of a parameter sweep
 ITERS = 50; % Maximum iterations for performing parameter optimization
 
@@ -88,7 +90,7 @@ if OPTIMIZE && ~PLOT_ONLY
         @getTerrain, @getCost, SWEEP1, SWEEP2, SAMPLES, STEPS, ...
         ABORT_STRIKES, IGNORE_FAILS, SEED, ITERS);
 elseif ~OPTIMIZE && ~PLOT_ONLY
-    [meanScores, rawScores, seeds, robots] = simulate(@getConfig, ...
+    [meanScores, rawScores, allScores, seeds, robots] = simulate(@getConfig, ...
         @getTerrain, @getScores, @averageScores, SWEEP1, SWEEP2, SAMPLES, STEPS, ...
         TIME_STEP, ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA);
 end
@@ -118,7 +120,7 @@ end
 function config = getConfig(var1, var2)
     configs = {[2,2,2,2], [3,2,2,2], [3,3,2,2], [3,3,3,2], [3,3,3,3]};
     config = quadruped(configs{3}, ...
-        0.1, 0.3, {var1, [var2/2, var2/2]}, 0, 2);
+        0.1, 0.3, {var1, [var2/2, var2/2]}, 0, 4);
 %         0.1, 0.3, {var1, var2}, 0, 2);
 end
 

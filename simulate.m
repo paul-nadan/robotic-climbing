@@ -1,4 +1,4 @@
-function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
+function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig, ...
     getTerrain, getScores, averageScores, SWEEP1, SWEEP2, SAMPLES, STEPS, TIME_STEP, ...
     ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA)
 
@@ -36,6 +36,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
     
     % Initialization
     rawScores = zeros(N1, N2, SAMPLES, length(SCORES));
+    allScores = zeros(N1, N2, SAMPLES, STEPS, length(SCORES));
     aborted = zeros(N1, N2);
     if SIMULATE
         robots = cell(N1, N2, SAMPLES);
@@ -44,7 +45,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
     end
     
     % Iterate over parameters
-    workers = 4;%(N1 > 1)*N1*SIMULATE;
+    workers = 0;%(N1 > 1)*N1*SIMULATE;
     parfor (i1 = 1:N1,workers)
 %     for i1 = 1:N1
         for i2 = 1:N2
@@ -122,6 +123,7 @@ function [meanScores, rawScores, seeds, robots] = simulate(getConfig, ...
                 tempScores = mean(stepScores, 1, 'omitnan');
                 tempScores(2) = max(stepScores(:,2), [], 'omitnan');
                 rawScores(i1, i2, i3, :) = tempScores;
+                allScores(i1, i2, i3, :, :) = stepScores;
                 if IGNORE_FAILS && robot.fail
                     rawScores(i1, i2, i3, :) = NaN;
                 end
