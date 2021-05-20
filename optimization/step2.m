@@ -1,5 +1,16 @@
 % Compute new robot state given previous state and current step number
-function r = step2(r0, count0, grid, skip)
+function r = step2(r0, count0, grid, skip, fixedFootPlacements)
+    simpleStep = 0;
+    swingPos = [];
+    if nargin < 5
+        fixedFootPlacements = [];
+    end
+    if simpleStep && ~isempty(r0.seed)
+        seed = r0.seed;
+        r0 = state2robot(r0.seed, r0.config);
+        r0.seed = seed;
+    end
+
     global x_optimal f_optimal
     x_optimal = 0;
     f_optimal = -1;
@@ -49,6 +60,20 @@ function r = step2(r0, count0, grid, skip)
         lb(ix0+10:ix0+nX) = lb(ix0+10:ix0+nX) + r0.config.gait.buffer(:,i(iStep));
         ub(ix0+10:ix0+nX) = ub(ix0+10:ix0+nX) - r0.config.gait.buffer(:,i(iStep));
     end
+    if simpleStep
+        swingPos = r0.vertices(:,logical(any(r0.gait.feet == 1,2).*~r0.gait.feet(:,i)));
+%         swingPos = swingPos + sum(r0.gait.dx, 2);
+        h = grid.params{4};
+        for iSwingFoot = 1:size(swingPos,2)
+            swingPos(2,iSwingFoot) = arclengthStep(swingPos(2,iSwingFoot), h, sum(r0.gait.dx(2,:)));
+        end
+    end
+    if ~isempty(fixedFootPlacements)
+        fixedFootPlacements = fixedFootPlacements(:,[2,4,6,8]);
+        iSwingFoot = logical(any(r0.gait.feet == 1,2).*~r0.gait.feet(:,i));
+        iSwingFoot = iSwingFoot(any(r0.gait.feet == 1,2));
+        swingPos = fixedFootPlacements(:,iSwingFoot);
+    end
     
     
 %     if oneleg
@@ -70,11 +95,11 @@ function r = step2(r0, count0, grid, skip)
         'CheckGradients', false, 'FiniteDifferenceType', 'central', ...
         'OutputFcn', @saveBest);
     [xFree,~,flagFree,outputFree] = fmincon(@(x)costFull(x, []),Xn,[],[],...
-        [],[],lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, 0, skip),options);
+        [],[],lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, 0, skip, swingPos),options);
     Xn = xFree(1:length(Xn));
     
     % Seed solver with previous horizon results
-    if isfield(r0, 'seed')
+    if 0 && isfield(r0, 'seed')
         h = min(horizon*nX, length(r0.seed));
         if h == length(Xn) && ~skip
             Xn(1:h) = r0.seed(1:h);
@@ -102,6 +127,11 @@ function r = step2(r0, count0, grid, skip)
         c0 = max(costGripper(robotFree, f0, i(iStep)+skip, grid));
         F0 = [F0; f0];
         C0 = [C0; c0];
+        if iStep == 1 && simpleStep
+%             swingPos = robotFree.vertices(:,logical(any(robotFree.gait.feet == 1,2).*~robotFree.gait.feet(:,i)));
+%             swingPos = r0.vertices(:,logical(any(r0.gait.feet == 1,2).*~r0.gait.feet(:,i)));
+%             swingPos = swingPos + sum(r0.gait.dx, 2);
+        end
     end
     
     % Full solution with grip margin cost
@@ -111,8 +141,9 @@ function r = step2(r0, count0, grid, skip)
     ub = [ub; zeros(nFC, 1)+Inf];
     x_optimal = 0;
     f_optimal = -1;
+    
     [x,~,flag,output] = fmincon(@(x)costFull(x, weights),[Xn;F0;C0],[],[],...
-        [],[],lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip),options);
+        [],[],lb,ub,@(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip, swingPos),options);
     if flag <= 0 && f_optimal ~= -1
         x = x_optimal;
         flag = 1;
@@ -122,9 +153,9 @@ function r = step2(r0, count0, grid, skip)
         flag = 1;
     end
     % Fallback to preliminary solution
-    if length(weights)==1&&max(C0)<=1&&count0>0&&flag<=0
+    if (length(weights)==1&&max(C0)<=1&&count0>0&&flag<=0) || (simpleStep&&flag<=0)
         fprintf('Falling back on no-cost solution\n');
-        x = [Xn; F0; C0];
+        x = [xFree(1:length(Xn)); F0; C0];
         flag = flagFree;
     end
     
@@ -133,7 +164,12 @@ function r = step2(r0, count0, grid, skip)
     r.skip = skip;
     r.F = reshape(x(end-nFC+1:end-nFC+length(F0)/length(weights)), 3, []);
     r.fail = count0>0&&flag<=0;
-    if r.fail
+    if ~isempty(r0.seed)
+        r.seed = xFree;
+    else
+        r.seed = x(1:length(xFree));
+    end
+    if r.fail && ~simpleStep
         fprintf('\n');
 %         disp(output.message);
         if isfield(r0, 'seed')
@@ -162,23 +198,23 @@ function r = step2(r0, count0, grid, skip)
         elseif r0.config.threshold < 35
             fprintf('Raising threshold: %d\n', r0.config.threshold+1);
             r0.R0 = vrrotvec2mat([0 0 1 -yawErr])*r0.R0;
-            r0.config.threshold = r0.config.threshold + 1;
+            r0.config.threshold = r0.config.threshold + 2;
             r = step2(r0, count0, grid, 0);
-            r.config.threshold = r0.config.threshold - 1;
-        else
-            fprintf('Trying global optimization\n');
-            [x,~,flag,~,~] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid, weights, 0);
-%             if flag ~= -1
-%                 x = [Xn; F0; C0];
-%             end
-            r = state2robot(x(1:nX), r0.config);
-            r.F = reshape(x(end-nFC+1:end-nFC+length(F0)/length(weights)), 3, []);
-            r.fail = flag ~= -1;
-            r.seed = x(nX+1:horizon*nX);
-            r.skip = 0;
+            r.config.threshold = r0.config.threshold - 2;
+%         else
+%             fprintf('Trying global optimization\n');
+%             [x,~,flag,~,~] = optimizeGlobal(Xn, F0, C0, rd, lb, ub, Aeq, beq, i, count0, options, grid, weights, 0);
+% %             if flag ~= -1
+% %                 x = [Xn; F0; C0];
+% %             end
+%             r = state2robot(x(1:nX), r0.config);
+%             r.F = reshape(x(end-nFC+1:end-nFC+length(F0)/length(weights)), 3, []);
+%             r.fail = flag ~= -1;
+%             r.seed = x(nX+1:horizon*nX);
+%             r.skip = 0;
         end
     else
-        r.seed = x(nX+1:horizon*nX);
+%         r.seed = x(nX+1:horizon*nX);
     end
 end
 
@@ -191,7 +227,7 @@ function [c, g] = costFull(x, weights)
 end
 
 % Satisfy all constraints for all steps in simulation horizon
-function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon, skip)    
+function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon, skip, swingPos)    
     iF = mod(i+skip, size(rd(1).gait.angles, 2))+1; % next step in gait cycle
     nF = 3*sum(rd(2).gait.feet(:,iF(1)) > 0); % number of force variables
     X = x(1:end-costHorizon*(1+nF)); % state variables
@@ -205,7 +241,7 @@ function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon, skip)
     for iStep = 1:length(rd)-1
         xi = X(nX*(iStep-1)+1:nX*iStep);
         r = state2robot(xi, rd(1).config);
-        [cX,ceqX] = constraintsKinematic(xi, r, r0, i(iStep), stepping, grid);
+        [cX,ceqX] = constraintsKinematic(xi, r, r0, i(iStep), stepping, grid, swingPos);
         newFeet = r.vertices;
         if iStep > 1
             stance = r0.gait.feet(:,i(iStep)) > 0;
@@ -218,9 +254,9 @@ function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon, skip)
         if iStep <= costHorizon
             xFi = xF(nF*(iStep-1)+1:nF*iStep);
             xCi = xC(iStep);
-            ceqF = constraintsForce(r, xFi, iF(iStep));
-            cC = constraintsCost(r, xFi, xCi, i(iStep)+skip, grid, 0 > 1);
-            c = [c; cC];
+            [cF, ceqF] = constraintsForce(r, xFi, iF(iStep), grid);
+            cC = constraintsCost(r, xFi, xCi, i(iStep)+skip, grid, ~isempty(swingPos));
+            c = [c; cF; cC];
             ceq = [ceq; ceqF];
         end
         r0 = r;
@@ -228,31 +264,39 @@ function [c,ceq] = constraintsFull(x, rd, i, stepping, grid, costHorizon, skip)
 end
 
 % Satisfy kinematic constraints for one step
-function [c,ceq] = constraintsKinematic(x, r, r0, i, stepping, grid)
+function [c,ceq] = constraintsKinematic(x, r, r0, i, stepping, grid, swingPos)
     allFeet = r.vertices(:, sum(r0.gait.feet, 2) > 0);
-    stanceFeet = r.vertices(:, r0.gait.feet(:,i) > 0);
-    fixedFeet = r0.vertices(:, r0.gait.feet(:,i) > 0);
+    stanceFeet = r.vertices(:, r0.gait.feet(:,i) == 1);
+    fixedFeet = r0.vertices(:, r0.gait.feet(:,i) == 1);
+    swingFeet = r.vertices(:,logical(any(r.gait.feet == 1,2).*~r.gait.feet(:,i)));
+%     iswingFeet = logical(any(r.gait.feet,2).*~r.gait.feet(:,i));
     ceq = [x(4:6)'*x(7:9);
            norm(x(4:6))-1;
            norm(x(7:9))-1;
            contact(allFeet, grid);
            stepping*(stanceFeet(1,:)-fixedFeet(1,:))';
+%            stepping*(stanceFeet(1,1:end-1)-fixedFeet(1,1:end-1))';
            stepping*(stanceFeet(2,:)-fixedFeet(2,:))'];
-    body = [r.bodies{:}];
+    if ~isempty(swingPos)
+        ceq = [ceq; reshape(swingFeet(1:2,:) - swingPos(1:2,:), [], 1)];
+    end
+    body = [r.bodies{:},r.vertices(:,~any(r.gait.feet,2))];
     dz = -contact(body, grid) + r0.config.clearance;
     B = cross(x(4:6), x(7:9));
+%     dy = r.vertices(2, iswingFeet) - r0.vertices(2, iswingFeet) - 0.02;
     c = [dz; -B(3)];
+%     c = [dz; -B(3); grid.params{3}*5-swingFeet(2)];
 end
 
 % Satisfy force and torque balance constraints for one step
-function ceq = constraintsForce(robot, xF, iF)
+function [c, ceq] = constraintsForce(robot, xF, iF, grid)
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
-    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
     feet = robot.vertices(:, robot.gait.feet(:,iF) > 0);
     r = feet - robot.origin;
     
     % Find contact forces
-    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
+    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*9.81;
+%     G = [1;0;0]*9.81;
     Aeq_torque = zeros(3,3*size(feet,2));
     for iFoot = 1:size(feet,2)
         ri = r(:,iFoot);
@@ -260,9 +304,35 @@ function ceq = constraintsForce(robot, xF, iF)
                                            -ri(3), 0, ri(1);
                                            ri(2), -ri(1), 0];
     end
+    gtorque = [0;0;0];
+    for iBody = 1:length(robot.config.bodies)
+        gvec = G*robot.config.mass(iBody);
+        rg = robot.com(:,iBody) - robot.origin;
+        gtorque = gtorque + cross(rg, gvec);
+    end
     Aeq = [repmat(eye(3), 1, size(feet,2)); Aeq_torque];
-    beq = [-G;zeros(3,1)];
+    beq = [-G*sum(robot.config.mass); gtorque];
     ceq = Aeq*xF - beq;
+    
+    % Tail can only apply normal force
+    F = reshape(xF, 3, []);
+    Findices = robot.gait.feet(robot.gait.feet(:,iF) > 0, iF);
+    F = F(:,Findices == 2);
+    tails = robot.vertices(:, robot.gait.feet(:,iF) == 2);
+    N = zeros(3,size(tails, 2));
+    for iTail = 1:size(tails, 2)
+        tail = tails(:,iTail);
+        N(:,iTail) = [-f(tail(1),tail(2),grid.dzdx,grid);...
+                       -f(tail(1),tail(2),grid.dzdy,grid); 1];
+        N(:,iTail) = N(:,iTail)/norm(N(:,iTail));
+    end
+    Fnorm = zeros(1,size(tails,2));
+    Ftang = zeros(1,size(tails,2));
+    for iTail = 1:size(tails,2)
+        Fnorm(iTail) = -F(:,iTail)'*N(:,iTail);
+        Ftang(iTail) = norm(cross(F(:,iTail),N(:,iTail)));
+    end
+    c = [Fnorm; Ftang];
 end
 
 % Satisfy cost slack variable constraint for one step
@@ -311,7 +381,7 @@ function [x,cost,flag,output,solutions] = optimizeGlobal(Xn, F0, C0, rd, lb, ub,
     gs = GlobalSearch('Display','iter', 'OutputFcn', @stopIfConverged);
     problem = createOptimProblem('fmincon','x0',[Xn;F0;C0],...
         'objective',@(x)costFull(x, weights),'lb',lb,'ub',ub,'Aeq',Aeq,'beq',beq,'nonlcon',...
-        @(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip),'options',options);
+        @(x)constraintsFull(x, rd, i, count0>0, grid, length(weights), skip, []),'options',options);
     
 %     problem = createOptimProblem('fmincon','x0',Xn,...
 %         'objective',@(x)costFull(x, []),'lb',lb(1:length(Xn)),'ub',ub(1:length(Xn)),'Aeq',Aeq,'beq',beq,'nonlcon',...
@@ -334,4 +404,22 @@ function stop = saveBest(x,optimValues,~)
         f_optimal = optimValues.fval;
     end
     stop = 0;
+end
+
+function y = arclengthStep(x, r, dx)
+    if x > 2*r
+        arclen = pi*r+x-2*r;
+    elseif x < 0
+        arclen = x;
+    else
+        arclen = r*asin(x/r-1)+r*pi/2;
+    end
+    arclen = arclen + dx;
+    if arclen < 0
+        y = arclen;
+    elseif arclen > pi*r
+        y = arclen - pi*r + 2*r;
+    else
+        y = r*sin(arclen/r-pi/2)+r;
+    end
 end

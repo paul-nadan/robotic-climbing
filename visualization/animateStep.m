@@ -31,7 +31,12 @@ function animateStep(r1, r2, dt, count, grid)
         end
         drawnow();
         if RECORD
-            FRAMES(length(FRAMES)+1) = getframe(gcf);
+            if isempty(FRAMES)
+                FRAMES = [getframe(gcf)];
+            else
+                FRAMES = [FRAMES,getframe(gcf)];
+%                 FRAMES(length(FRAMES)+1) = getframe(gcf);
+            end
         end
         if t ~= 1
             for iBody = 1:length(g.bodies)

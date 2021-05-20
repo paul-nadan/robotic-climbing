@@ -2,7 +2,6 @@
 function [F, Fnorm, Ftang, T, N] = quasiStaticDynamicsKnownForce(robot, count, F, grid)
     
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
-    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
     
     i = mod(count, size(robot.gait.angles, 2))+1;
     feet = robot.vertices(:, robot.gait.feet(:,i) > 0);
@@ -18,7 +17,8 @@ function [F, Fnorm, Ftang, T, N] = quasiStaticDynamicsKnownForce(robot, count, F
     end
     
     % Find contact forces
-    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
+    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*9.81;
+%     G = [1;0;0]*9.81;
     Fvec = reshape(F, [], 1);
     F = [reshape(Fvec, 3, []), G];
     
@@ -30,8 +30,14 @@ function [F, Fnorm, Ftang, T, N] = quasiStaticDynamicsKnownForce(robot, count, F
                                            -ri(3), 0, ri(1);
                                            ri(2), -ri(1), 0];
     end
+    gtorque = [0;0;0];
+    for iBody = 1:length(robot.config.bodies)
+        gvec = G*robot.config.mass(iBody);
+        rg = robot.com(:,iBody) - robot.origin;
+        gtorque = gtorque + cross(rg, gvec);
+    end
     Aeq = [repmat(eye(3), 1, size(feet,2)); Aeq_torque];
-    beq = [-G;zeros(3,1)];
+    beq = [-G*sum(robot.config.mass); gtorque];
     equilibriumError = max(abs(Aeq*Fvec-beq))/max(abs(beq));
     if equilibriumError > 1e-5
         fprintf('Forces violate equilibrium constraint: error = %.3e\n', equilibriumError);
@@ -58,5 +64,10 @@ function [F, Fnorm, Ftang, T, N] = quasiStaticDynamicsKnownForce(robot, count, F
             rFoot = feet(:,iFoot)-joints(:,iJoint);
             T(:, iJoint) = T(:, iJoint) + cross(rFoot, F(:,iFoot));
         end
+        motor = robot.config.joints(:,2,iJoint);
+        R = robot.R(:,:,iJoint);
+        motor_world = R*motor;
+        T(:, iJoint) = T(:, iJoint)'*motor_world;
+        T(2:3, iJoint) = 0;
     end
 end

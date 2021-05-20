@@ -33,6 +33,7 @@ function config = quadruped(dof, w, h, L, trot, horizon)
         config.joints(:,2,iJoint) = z; % shoulder yaw axis
         config.joints(:,2,iJoint+1) = y; % shoulder roll axis
         config.joints(:,3,iJoint+1) = x*L{dof(iLeg)-1}(1); % link 1
+%         config.joints(:,3,iJoint+1) = x*L(1+(iLeg <= 2)); % link 1
         config.limits(iJoint:iJoint+1,:) = [-60-15, 60+15; -45, 90];
         config.gait.angles(iJoint+1,:) = 45;
         if trot
@@ -46,6 +47,7 @@ function config = quadruped(dof, w, h, L, trot, horizon)
         if dof(iLeg) == 3
             config.joints(:,2,iJoint+2) = y; % elbow roll axis
             config.joints(:,3,iJoint+2) = x*L{dof(iLeg)-1}(2); % link 2
+%             config.joints(:,3,iJoint+2) = x*L(1+(iLeg <= 2)); % link 2
             config.limits(iJoint+1, :) = [-90, 45];
             config.limits(iJoint+2, :) = [0, 135];
             config.gait.feet(iJoint+1,:) = 0;

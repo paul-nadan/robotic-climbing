@@ -2,7 +2,6 @@
 function [F, Fnorm, Ftang, T] = quasiStaticDynamicsMargin(robot, count, grid)
     
     GRAVITY_ANGLE = 90; % Angle of gravity vector (vertical wall = 90)
-    WEIGHT = 5*9.81; % Magnitude of gravity force (N)
     
     i = mod(count, size(robot.gait.angles, 2))+1;
     feet = robot.vertices(:, robot.gait.feet(:,i) > 0);
@@ -18,7 +17,8 @@ function [F, Fnorm, Ftang, T] = quasiStaticDynamicsMargin(robot, count, grid)
     end
     
     % Find contact forces
-    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
+    G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*9.81;
+%     G = [1;0;0]*9.81;
     Aeq_torque = zeros(3,3*size(feet,2));
     for iFoot = 1:size(feet,2)
         ri = r(:,iFoot);
@@ -26,10 +26,16 @@ function [F, Fnorm, Ftang, T] = quasiStaticDynamicsMargin(robot, count, grid)
                                            -ri(3), 0, ri(1);
                                            ri(2), -ri(1), 0];
     end
+    gtorque = [0;0;0];
+    for iBody = 1:length(robot.config.bodies)
+        gvec = G*robot.config.mass(iBody);
+        rg = robot.com(:,iBody) - robot.origin;
+        gtorque = gtorque + cross(rg, gvec);
+    end
     X0 = robot2state(robot);
     Aeq = [repmat(eye(3), 1, size(feet,2)); Aeq_torque];
     Aeq = [zeros(6,length(X0)), Aeq];
-    beq = [-G;zeros(3,1)];
+    beq = [-G*sum(robot.config.mass); gtorque];
     [F0,~,~,~] = quasiStaticDynamics(robot, count, grid);
     F0 = reshape(F0(:,1:end-1), [], 1);
     lb = [X0; -ones(size(F0))*Inf];

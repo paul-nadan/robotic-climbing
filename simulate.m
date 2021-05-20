@@ -1,7 +1,9 @@
 function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig, ...
     getTerrain, getScores, averageScores, SWEEP1, SWEEP2, SAMPLES, STEPS, TIME_STEP, ...
-    ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA)
+    ABORT_STRIKES, IGNORE_FAILS, SEED, SCORES, REUSE_DATA, fixedFootPlacements)
 
+    obstacleStep = 0;
+    
     global FRAMES ANIMATE RECORD PLOT
     N1 = length(SWEEP1);
     N2 = length(SWEEP2);
@@ -30,7 +32,7 @@ function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig,
     end
     fprintf('Simulation Seed: %d\n\n', SEED);
     seeds = repmat(rand(1, 1, SAMPLES)*1000, N1, N2);
-    if N1 == 1 && N2 == 1
+    if N1 == 1 && N2 == 1 && SAMPLES == 1
         seeds = SEED;
     end
     
@@ -45,7 +47,7 @@ function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig,
     end
     
     % Iterate over parameters
-    workers = 0;%(N1 > 1)*N1*SIMULATE;
+    workers = 4;%(N1 > 1)*N1*SIMULATE;
     parfor (i1 = 1:N1,workers)
 %     for i1 = 1:N1
         for i2 = 1:N2
@@ -58,11 +60,12 @@ function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig,
             strikes = 0;
             for i3 = 1:SAMPLES
                 % Generate terrain
-                grid = feval(getTerrain, sweep1, sweep2, seeds(i1, i2, i3));
+%                 grid = feval(getTerrain, sweep1, sweep2, seeds(i1, i2, i3));
+                grid = feval(getTerrain, i3, sweep2, seeds(i1, i2, i3));
 
                 % Initialize robot
                 if SIMULATE
-                    robot = spawnRobot(grid.spawn, eye(3), config, grid);
+                    robot = spawnRobot(grid.spawn, eye(3), config, grid, obstacleStep);
                     robot.skip = 0;
                     robots{i1, i2, i3} = repmat(robot, STEPS + 1, 1);
                 end
@@ -72,7 +75,10 @@ function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig,
                 fprintf('Scores:  [');
                 fprintf('%10s, ', string(SCORES));
                 fprintf(']\n');
-                skips = 0;
+                skips = 0 + obstacleStep-1;
+                if obstacleStep == 0
+                    skips = 0;
+                end
                 for i = 1:STEPS
                     if i < 10
                         fprintf('Step %d:  ', i);
@@ -81,12 +87,21 @@ function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig,
                     end
                     dt = NaN;
                     lastRobot = robots{i1, i2, i3}(i);
-                    if 0 && lastRobot.fail
+                    % Obstacles
+%                     lastRobot = spawnRobot(grid.spawn, eye(3), config, grid, i);
+%                     lastRobot.skip = 0;
+%                     skips = 0;
+                    %
+                    if 0&&lastRobot.fail
                         robot = lastRobot;
                         robots{i1, i2, i3}(i+1) = robot;
                     elseif SIMULATE
                         tic();
-                        robot = step2(lastRobot, i+skips, grid, 0);
+                        if length(fixedFootPlacements) >= i+1
+                            robot = step2(lastRobot, i+skips, grid, 0, fixedFootPlacements{i+1});
+                        else
+                            robot = step2(lastRobot, i+skips, grid, 0, []);
+                        end
                         dt = toc();
                         robots{i1, i2, i3}(i+1) = robot;
                     else
@@ -117,17 +132,21 @@ function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig,
                     if robot.fail && ~lastRobot.fail
                         strikes = strikes + 1;
                     end
+%                     if stepScores(i,3) >= 0.3
+%                         stepScores(i+1:end,:) = NaN;
+%                         break
+%                     end
                 end
 
                 % Evaluate iteration results
                 tempScores = mean(stepScores, 1, 'omitnan');
-                tempScores(2) = max(stepScores(:,2), [], 'omitnan');
+%                 tempScores(2) = max(stepScores(:,2), [], 'omitnan');
                 rawScores(i1, i2, i3, :) = tempScores;
                 allScores(i1, i2, i3, :, :) = stepScores;
                 if IGNORE_FAILS && robot.fail
                     rawScores(i1, i2, i3, :) = NaN;
                 end
-                robot = robots{i1, i2, i3}(end);
+%                 robot = robots{i1, i2, i3}(end);
                 [F1, ~, ~, ~] = quasiStaticDynamicsKnownForce(robot, STEPS, robot.F, grid);
 %                 F2 = quasiStaticDynamics(robot, STEPS, grid);
                 path = [robots{i1, i2, i3}.origin];
@@ -157,6 +176,6 @@ function [meanScores, rawScores, allScores, seeds, robots] = simulate(getConfig,
         end
     end
     rawScores(:, :, :, 1) = rawScores(:, :, :, 1).*(~aborted);
-    meanScores = feval(averageScores, rawScores, robots);
+    [meanScores, rawScores] = feval(averageScores, rawScores, allScores, robots);
     fprintf('Total simulation runtime: %.3f seconds\n', toc(startTime));
 end

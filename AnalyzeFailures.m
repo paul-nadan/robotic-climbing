@@ -1,13 +1,21 @@
-x = 4;
+x = 5;
 y = 1;
-n = 3;
-solve = ~~1;
+n = 2;
+solve = ~~0;
 
-global PLOT ANIMATE RECORD
+close all;
+global PLOT ANIMATE RECORD FRAMES
 PLOT = 1;
 ANIMATE = 1;
-RECORD = 0;
-
+RECORD = 1;
+FRAMES = [];
+if RECORD
+    figure('units','normalized','outerposition',[0 0 .3 1]);
+    FRAMES = struct('cdata',{},'colormap',{});
+elseif ANIMATE || PLOT
+    figure('units','normalized','outerposition',...
+        [0 0.2 0.3 0.7]);
+end
 seed = seeds(x, y, n);
 if solve
     [meanScores1, rawScores1, allScores1, seeds1, robots1] = simulate(@getConfig, ...
@@ -18,25 +26,37 @@ else
     robots1 = robots{x,y,n};
 end
 
-grid = terrain([-1.5, 1.5], ...
-    [-1.5 3.5], .01, 1*[1,1,0.5], [1, .25, 0.0625], 0, [0;-.75;0], seed);
+% grid = terrain([-1.5, 1.5], ...
+%     [-1.5 3.5], .01, 1*[1,1,0.5], [1, .25, 0.0625], 0, [0;-.75;0], seed);
+SAMPLES = 7;
+h = (n-(SAMPLES+1)/2)*0.05;
+grid = obstacle([-1, 1], ...
+        [-1 1], .01, h, 0.1, [0;-.75;0], seed);
 cost = zeros(STEPS+1,1);
 skips = 0;
+grid = getTerrain(n, SAMPLES, seed);
 for i = 1:STEPS+1
     robot = robots1(i);
     if isfield(robot, 'skip')
         skips = skips + robot.skip;
     end
-    figure(i);
+%     figure(i);
     plotTerrain(grid);
-    plotRobot(robot);
-    title(i);
-    [F, Fnorm, Ftang, ~, N] = quasiStaticDynamicsKnownForce(robot, i+skips-1, robot.F, grid);
+%     plotRobot(robot);
+%     title(i);
+    if i > 1 && ~isempty(robot.F)
+    animateStep(lastRobot, robot, TIME_STEP,-1+ i+skips-robot.skip, grid);
+%     robot.F
+    [F, Fnorm, Ftang, T, N] = quasiStaticDynamicsKnownForce(robot, i+skips-1, robot.F, grid);
     Fnorm = max(Fnorm,0);
     [~, ~, c2] = gripperMargin(Fnorm, Ftang);
     cost(i) = max(c2);
+    plotTerrain(grid);
+    plotRobot(robot);
     plotForces(robot, F, i+skips-1, 'g', 0.016);
     plotForces(robot, [N, [0;0;0]], i+skips-1, 'r', 0.16);
+    end
+    lastRobot = robot;
 end
 disp(cost);
 disp([robots1.fail]');
@@ -53,8 +73,15 @@ end
 
 % User-defined terrain geometry as a function of swept parameters
 function grid = getTerrain(var1, var2, seed)
+    n = var1;
+    SAMPLES = var2;
     grid = terrain([-1.5, 1.5], ...
         [-1.5 3.5], .01, 1*[1,1,0.5], [1, .25, 0.0625], 0, [0;-.75;0], seed);
+    h = (n-1)*0.05
+%     h = (n-(SAMPLES+1)/2)*0.05;
+%     h = 0.3/2;
+%     grid = obstacle([-1, 1], ...
+%         [-1 1], .01, h, 0.1, [0;-.75;0], seed);
 end
 
 % User-defined evaluation metrics as a function of robot state

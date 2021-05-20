@@ -18,6 +18,7 @@ function plotResults(meanScores, SWEEP1, SWEEP2, SCORES, PLOT_SCORES, ...
             data = meanScores(:,:,1,PLOT_SCORES(score));
             data(isnan(data)) = max(data, [], 'all');
             imagesc(SWEEP1, SWEEP2, data');
+            set(gca,'YDir','normal');
             colorbar;
             title(SCORES{PLOT_SCORES(score)});
             xlabel(AXIS_LABELS{1});

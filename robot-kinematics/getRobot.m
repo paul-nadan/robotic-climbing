@@ -34,4 +34,12 @@ function robot = getRobot(origin, R0, angles, config)
                 R0*config.bodies{i};
         end
     end
+    
+    origins = [robot.origin, robot.vertices];
+    Rall = cat(3, R0, robot.R);
+    robot.com = origins(:,robot.config.iBodies+1);
+    for iBody = 1:length(config.bodies)
+        robot.com(:,iBody) = robot.com(:,iBody) +...
+            Rall(:,:,robot.config.iBodies(iBody)+1)*robot.config.com(:,iBody);
+    end
 end

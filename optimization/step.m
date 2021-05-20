@@ -242,6 +242,7 @@ function [c,ceq] = constraintsForce(xF, robot, iF)
     
     % Find contact forces
     G = [0;-sind(GRAVITY_ANGLE);-cosd(GRAVITY_ANGLE)]*WEIGHT;
+%     G = [1;0;0]*WEIGHT;
     Aeq_torque = zeros(3,3*size(feet,2));
     for iFoot = 1:size(feet,2)
         ri = r(:,iFoot);
