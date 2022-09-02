@@ -1,3 +1,7 @@
+BLA::Matrix<12, 1> integral;    // accumulated error integral from controller
+BLA::Matrix<6, 1> prevFb;  // previous wrench error
+long prevt;                     // timestamp of previous wrench error
+
 // Convert a vector to a skew-symmetric matrix
 BLA::Matrix<3, 3> getSkew(float x, float y, float z) {
   BLA::Matrix<3, 3> skew = {0, -z, y, z, 0, -x, -y, x, 0};
@@ -35,7 +39,7 @@ BLA::Matrix<6, 13> getGtail() {
   float *x = getTailPos();
   BLA::Matrix<3, 1> zhat = {0, 0, 1};
   G.Submatrix<3, 1>(0, 12) = zhat;
-  G.Submatrix<3, 1>(3, 12) = getSkew(x[0], x[1], x[2])*zhat;
+  G.Submatrix<3, 1>(3, 12) = getSkew(x[0], x[1], x[2]) * zhat;
   return (G);
 }
 
@@ -87,6 +91,31 @@ BLA::Matrix<13, 1> getXftail() {
   return (Xf);
 }
 
+// Determine current foot position vector
+BLA::Matrix<12, 1> getVf() {
+  BLA::Matrix<12, 1> Vf;
+  for (int i = 0; i < 4; i++) {
+    float *v = getFootVel(i + 1);
+    for (int j = 0; j < 3; j++) {
+      Vf(i * 3 + j) = v[j];
+    }
+  }
+  return (Vf);
+}
+
+// Determine current foot position vector
+BLA::Matrix<13, 1> getVftail() {
+  BLA::Matrix<13, 1> Vf;
+  for (int i = 0; i < 4; i++) {
+    float *v = getFootVel(i + 1);
+    for (int j = 0; j < 3; j++) {
+      Vf(i * 3 + j) = v[j];
+    }
+  }
+  Vf(12) = getTailVel()[2];
+  return (Vf);
+}
+
 // Determine current foot position setpoint vector
 BLA::Matrix<13, 1> getXf0tail() {
   BLA::Matrix<13, 1> Xf;
@@ -100,29 +129,65 @@ BLA::Matrix<13, 1> getXf0tail() {
   return (Xf);
 }
 
+// Directly move motors to their setpoints
+void noControl() {
+  for (int i = 0; i < 5; i++) {
+    for (int j = 0; j < 3; j++) {
+      goal_angles[i][j] = setpoints[i][j];
+      // goal_torques[i][j] = motor_torque;
+    }
+  }
+}
+
 // Maintain current position using pseudo-inverse impedance control strategy, including tail
 void impedanceControlTail() {
   BLA::Matrix<6, 13> G;
-  BLA::Matrix<6, 1> Xb, Fb;
+  BLA::Matrix<13, 6> Ginv;
+  BLA::Matrix<6, 1> Xb, Fb, Vb, dFb;
   BLA::Matrix<6, 1> k = {1, 1, 1, 1, 1, 1};
-  BLA::Matrix<13, 1> Xf, Ff, Xf0;
-  BLA::Matrix<13, 1> w = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+  BLA::Matrix<13, 1> Xf, Ff, Xf0, Vf;
+  BLA::Matrix<13, 1> w = {foot_weights[0], foot_weights[0], foot_weights[0],
+                          foot_weights[1], foot_weights[1], foot_weights[1],
+                          foot_weights[2], foot_weights[2], foot_weights[2],
+                          foot_weights[3], foot_weights[3], foot_weights[3], foot_weights[4]};
   BLA::Matrix<13, 6> temp;
-  float kP = .5, kD = 0, kI = 0;
-  G = getGtail();
-  Xf = getXftail();
+  // float kP = 1, kD = 0, kI = 0;
+  G = getGtail(); // 2 ms
+  Xf = getXftail(); // 1 ms
+  Vf = getVftail(); // ?
   Xf0 = getXf0tail();
-//  Xb = ~pinv(G) * (Xf - Xf0); // 2 ms
-  Xb = ~((~G) * BLA::Inverse(G * (~G))) * (Xf - Xf0); // 2 ms
-  Fb = -vscale(k, Xb);
-  integral.Submatrix<6, 1>(0, 0) += scale(Fb, dt) / 1000.0;
-  temp = pinv(hscale(G, w));
-  Ff = vscale(w, temp) * (scale(Fb, kP) + scale(integral.Submatrix<6, 1>(0, 0), kI));
-  for (int i = 0; i < 4; i++) {
-    limitFootForce(i + 1, Ff(3 * i), Ff(3 * i + 1), Ff(3 * i + 2)); // 16 ms (total)
+  for (int i = 0; i < 13; i++) {
+    Xf0(i) = Xf0(i) * w(i) + Xf(i) * (1-w(i));
+    Vf(i) = Vf(i) * w(i);
   }
-  limitTailForce(Ff(12));
-  Serial << int(millis() - t0) << "  |  " << Fb << "  |   " << integral.Submatrix<6, 1>(0, 0) << "  |   " << Ff << "\n";
+  Ginv = (~G) * BLA::Inverse(G * (~G)); // ?
+  //  Xb = ~pinv(G) * (Xf - Xf0); // 2 ms
+  // Xb = ~((~G) * BLA::Inverse(G * (~G))) * (Xf - Xf0); // 2 ms
+  Xb = ~Ginv * (Xf - Xf0); // ?
+  Vb = ~Ginv * Vf; // ?
+  Fb = -vscale(k, Xb);
+  dFb = -vscale(k, Vb);
+  // dFb = (Fb - prevFb)*1000/(millis() - prevt);
+  prevt = millis();
+  prevFb = Fb;
+  integral.Submatrix<6, 1>(0, 0) += scale(Fb, dt) / 1000.0;
+  temp = pinv(hscale(G, w)); // 3 ms
+  Ff = vscale(w, temp) * (scale(Fb, kP) + scale(dFb, kD) + scale(integral.Submatrix<6, 1>(0, 0), kI));
+  // Ff(0) += 10; // inward grasping test
+  // Ff(3) -= 10;
+  for (int i = 0; i < 4; i++) {
+    if (foot_weights[i] > 0) {
+      setFootForce(i + 1, Ff(3 * i), Ff(3 * i + 1), Ff(3 * i + 2)); // 1 ms (total)
+    } else {
+      for (int j = 0; j < 3; j++) {
+        goal_angles[i][j] = setpoints[i][j];
+      }
+    }
+  }
+  setTailForce(Ff(12));
+  // Serial << "P: " << scale(Fb, kP) << ", D: " << scale(dFb, kD) << "\n";
+  // Serial << Ff << "\n";
+  // Serial << int(millis() - t0) << "  |  " << Fb << "  |   " << integral.Submatrix<6, 1>(0, 0) << "  |   " << Ff << "\n";
 }
 
 // Maintain current position using pseudo-inverse impedance control strategy
@@ -133,11 +198,11 @@ void impedanceControlPseudoInverse() {
   BLA::Matrix<12, 1> Xf, Ff, Xf0;
   BLA::Matrix<12, 1> w = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
   BLA::Matrix<12, 6> temp;
-  float kP = 1, kI = 0;
+  // float kP = 1, kI = 0;
   G = getGpsuedo();
   Xf = getXf();
   Xf0 = getXf0();
-//  Xb = ~pinv(G) * (Xf - Xf0); // 2 ms
+  //  Xb = ~pinv(G) * (Xf - Xf0); // 2 ms
   Xb = ~((~G) * BLA::Inverse(G * (~G))) * (Xf - Xf0); // 2 ms
   Fb = -vscale(k, Xb);
   integral.Submatrix<6, 1>(0, 0) += scale(Fb, dt) / 1000.0;
@@ -146,7 +211,7 @@ void impedanceControlPseudoInverse() {
   for (int i = 0; i < 4; i++) {
     limitFootForce(i + 1, Ff(3 * i), Ff(3 * i + 1), Ff(3 * i + 2)); // 16 ms (total)
   }
-  Serial << int(millis() - t0) << "  |  " << Fb << "  |   " << integral.Submatrix<6, 1>(0, 0) << "  |   " << Ff << "\n";
+  // Serial << int(millis() - t0) << "  |  " << Fb << "  |   " << integral.Submatrix<6, 1>(0, 0) << "  |   " << Ff << "\n";
 }
 
 // Maintain current position using impedance control strategy
@@ -155,7 +220,7 @@ void impedanceControl() {
   BLA::Matrix<12, 1> Xb, Fb;
   BLA::Matrix<12, 1> k = {1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0};
   BLA::Matrix<12, 1> Xf, Ff, Xf0;
-  float kP = 10, kI = 0;
+  // float kP = 10, kI = 0;
   G = getG();
   Ginv = BLA::Inverse(G); // 5 ms
   Xf = getXf();
@@ -167,23 +232,26 @@ void impedanceControl() {
   for (int i = 0; i < 4; i++) {
     limitFootForce(i + 1, Ff(3 * i), Ff(3 * i + 1), Ff(3 * i + 2)); // 16 ms (total)
   }
-  Serial << int(millis() - t0) << "  |  " << Fb << "  |   " << integral << "  |   " << Ff << "\n";
+  // Serial << int(millis() - t0) << "  |  " << Fb << "  |   " << integral << "  |   " << Ff << "\n";
 }
 
 // Maintain current position using decentralized impedance control strategy
 void impedanceControlDecentralized() {
   BLA::Matrix<12, 1> k = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-  BLA::Matrix<12, 1> Xf, Ff, Xf0;
-  float kP = 0.1, kI = 0;
+  BLA::Matrix<12, 1> Xf, Ff, Xf0, Vf;
+  // float kP = 0.1, kI = 0;
   Xf = getXf();
   Xf0 = getXf0();
+  Vf = getVf();
   Xf = vscale(k, Xf - Xf0);
+  Vf = vscale(k, Vf);
   integral += scale(Xf, dt) / 1000.0;
-  Ff = -(scale(Xf, kP) + scale(integral, kI));
+  Ff = -(scale(Xf, kP) + scale(Vf, kD) + scale(integral, kI));
   for (int i = 0; i < 4; i++) {
-    limitFootForce(i + 1, Ff(3 * i), Ff(3 * i + 1), Ff(3 * i + 2)); // 16 ms (total)
+    setFootForce(i + 1, Ff(3 * i), Ff(3 * i + 1), Ff(3 * i + 2)); // 16 ms (total)
   }
-  Serial << int(millis() - t0) << "  |  " << Xf << "  |   " << integral << "  |   " << Ff << "\n";
+  // Serial << scale(Vf, kD) << "\n";
+  // Serial << int(millis() - t0) << "  |  " << Xf << "  |   " << integral << "  |   " << Ff << "\n";
 }
 
 // Compute the pseudo-inverse of a matrix
@@ -234,4 +302,48 @@ BLA::Matrix<rows, cols, MemT> vscale(BLA::Matrix<rows, 1> S, BLA::Matrix<rows, c
     }
   }
   return (A);
+}
+
+// Recenter body to minimize twist
+void recenter(int step) {
+  BLA::Matrix<6, 12> G;
+  BLA::Matrix<6, 13> Gt;
+  BLA::Matrix<12, 6> Ginv;
+  BLA::Matrix<6, 1> Xb;
+  BLA::Matrix<12, 1> Xf, Xf0;
+  BLA::Matrix<13, 1> Yf;
+  Gt = getGtail(); // 2 ms
+  G = Gt.Submatrix<6, 12>(0, 0);
+  Xf = getXf0(); // 1 ms
+  Xf0 = getNominalStance(step);
+
+  // float zmax = -1000;
+  // float zmean = (Xf(2) + Xf(5) + Xf(8) + Xf(11))/4;
+  // for (int i = 0; i < 4; i++) {
+  //   zmax = max(zmax, Xf(i*3+2));
+  // }
+  // float offset = zmax -zmean;
+  // Serial << zmax << "\n";
+  // Serial << zmean << "\n";
+  // for (int i = 0; i < 4; i++) {
+  //   Xf0(i*3+2) -= offset;
+  // }
+  // Xf0(12) -= offset;
+
+  Ginv = (~G) * BLA::Inverse(G * (~G));
+  Xb = ~Ginv * (Xf0 - Xf);
+  Yf = (~Gt) * Xb;
+
+  float dmax = 0;
+  for (int i = 0; i < 4; i++) {
+    float d = sqrt(Yf(3*i)*Yf(3*i) + Yf(3*i+1)*Yf(3*i+1) + Yf(3*i+2)*Yf(3*i+2));
+    if (d > dmax) dmax = d;
+  }
+  for (int i = 0; i < 4; i++) {
+    float d = sqrt(Yf(3*i)*Yf(3*i) + Yf(3*i+1)*Yf(3*i+1) + Yf(3*i+2)*Yf(3*i+2));
+    float v = min(40*d/dmax, d*1000/dt);
+    moveFootInDirection(Yf(3*i), Yf(3*i+1), Yf(3*i+2), v, i+1);
+  }
+  // float vt = min(40*abs(Yf(12))/dmax, abs(Yf(12))*1000/dt);
+  // moveTailInDirection(Yf(12), vt);
 }

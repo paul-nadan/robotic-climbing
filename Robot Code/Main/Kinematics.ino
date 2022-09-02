@@ -13,11 +13,17 @@ float* getFootPosGoal(int foot) {
   return (getEndPosCentroidal(setpoints[foot - 1][0], setpoints[foot - 1][1], setpoints[foot - 1][2], foot));
 }
 
+// Determine foot velocity (mm/s)
+float* getFootVel(int foot) {
+  return (getEndVel(speeds[foot - 1][0], speeds[foot - 1][1], speeds[foot - 1][2],
+                    angles[foot - 1][0], angles[foot - 1][1], angles[foot - 1][2], foot));
+}
+
 // Determine current end effector forces (N)
 float* getFootForce(int foot) {
-  float t1 = getMotorTorque(foot);
-  float t2 = getMotorTorque(foot + 4);
-  float t3 = getMotorTorque(foot + 8);
+  float t1 = torques[foot - 1][0];
+  float t2 = torques[foot - 1][1];
+  float t3 = torques[foot - 1][2];
   return (getEndForce(-t1, -t2, -t3, angles[foot - 1][0], angles[foot - 1][1], angles[foot - 1][2], foot));
 }
 
@@ -121,13 +127,30 @@ float getTailTorque(float fz, float a) {
   return (t);
 }
 
+// Determine tail vertical force (N) from joint torque (N*mm) and joint angle (deg)
+float getTailForce(float t, float a) {
+  a = a * PI / 180;
+  float fz = t / (cos(a) * TAIL1);
+  return (fz);
+}
+
 // Determine tail position (mm) relative to centroid
 float* getTailPos() {
   static float x[3];
   float a = angles[4][1] * PI / 180;
   x[0] = 0;
-  x[1] = -LENGTH/2 - TAIL1*cos(a);
-  x[2] = TAIL1*sin(a);
+  x[1] = -LENGTH / 2 - TAIL1 * cos(a);
+  x[2] = TAIL1 * sin(a);
+  return (x);
+}
+
+// Determine tail position (mm) from joint angle (deg)
+float* getTailPos(float a) {
+  static float x[3];
+  a *= PI / 180;
+  x[0] = 0;
+  x[1] = -LENGTH / 2 - TAIL1 * cos(a);
+  x[2] = TAIL1 * sin(a);
   return (x);
 }
 
@@ -136,9 +159,31 @@ float* getTailPosGoal() {
   static float x[3];
   float a = setpoints[4][1] * PI / 180;
   x[0] = 0;
-  x[1] = -LENGTH/2 - TAIL1*cos(a);
-  x[2] = TAIL1*sin(a);
+  x[1] = -LENGTH / 2 - TAIL1 * cos(a);
+  x[2] = TAIL1 * sin(a);
   return (x);
+}
+
+// Determine tail end velocity (mm/s) from joint velocity (deg/s)
+float* getTailEndVel(float w) {
+  static float v[3];
+  w *= PI / 180;
+  float a = angles[4][1] * PI / 180;
+  v[0] = 0;
+  v[1] = TAIL1 * sin(a) * w;
+  v[2] = TAIL1 * cos(a) * w;
+  return (v);
+}
+
+// Determine tail velocity (mm/s)
+float* getTailVel() {
+  static float v[3];
+  float a = angles[4][1] * PI / 180;
+  float s = speeds[4][1];
+  v[0] = 0;
+  v[1] = TAIL1 * sin(a) * s;
+  v[2] = TAIL1 * cos(a) * s;
+  return (v);
 }
 
 // Determine end effector forces (N) from joint torques (N*mm) and joint angles (deg)

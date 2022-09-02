@@ -4,13 +4,13 @@ q0 = [1;0;0;0]; % body orientation
 x0 = [0;0;0]; % body origin
 mode = [1,1,1,1,1]; % feet in contact
 
-% x0 = (rand(3,1)-.5)*0.5;
+x0 = (rand(3,1)-.5)*0.5;
 
-ws = 1; % stance width/2
-ds = 1; % stance length/2
-hs = 1; % stance height
-Fmax = [-1 1; -1 1; -1 5].*[.5;.5;.5];
-m = 1;
+ws = 0.5; % stance width/2
+ds = 0.3; % stance length/2
+hs = 0.05; % stance height
+Fmax = [-1 1; -1 1; -1 1].*[1;1;1];
+m = 2;
 J = eye(3);
 g = vrrotvec2mat([0,0,1,deg2rad(0)])*[0; -1; 0];
 
@@ -18,13 +18,15 @@ stance = [.5; .5; .5]; % stance width/2, length/2, and height
 body = [0.2; 0.5; 0]; % body width, length, and height
 r0 = [-1 1 -1 1; 1 1 -1 -1; -1 -1 -1 -1].*stance;
 r0 = [r0, [0;-stance(2)*3;-stance(3)]];
-% r = vrrotvec2mat([rand(1,3), deg2rad(20)])*r0 + (rand(3,5)-.5)*.5;
+r = vrrotvec2mat([rand(1,3), deg2rad(20)])*r0 + (rand(3,5)-.5)*.5;
 r = r0;
 [rref, ~] = estimateFeet(x0, q0, zeros(3,1), zeros(3,1), r);
 
 dt = 0.001;
 tmax = 5;
 framerate = 15;
+controlrate = 0.01; % update period in seconds
+kprev = NaN; % previous control update index
 
 t = 0:dt:tmax;
 N = length(t);
@@ -38,7 +40,7 @@ N3 = floor(N/3);
 % xref(2,1:N3) = 3*(1:N3)/N*.2;
 % xref(2,N3+1:2*N3) = 1*.2;
 % xref(2,2*N3+1:3*N3) = (1-3*(1:N3)/N)*.2;
-Fref = [-1 1 -1 1 0; 0 0 0 0 0; 0 0 0 0 0]*.5;
+Fref = [-1 1 -1 1 0; 0 0 0 0 0; 0 0 0 0 0]*0;
 x(:,1) = x0;
 q(:,1) = q0;
 frames = struct('cdata',{},'colormap',{});
@@ -55,9 +57,15 @@ for k = 1:N-1
     rref = rref + dt*(r0-rref);
     [rhat, vhat] = estimateFeet(x(:,k), q(:,k), v(:,k), w(:,k), r);
     ghat = estimateGravity(q(:,k), g, false);
-    F(:,:,k) = getControl(rhat-xref(:,k), vhat, ghat, rref, g, mode) + Fref.*mode;
-    F(:,:,k) = min(max(F(:,:,k), Fmax(:,1)), Fmax(:,2));
-    F(3,5,k) = max(0, F(3,5,k));
+    if isnan(kprev) || t(k) - t(kprev) >= controlrate
+%         F(:,:,k) = getControl(rhat-xref(:,k), vhat, ghat, rref, g, mode) + Fref.*mode;
+        F(:,:,k) = getControlQP(rhat-xref(:,k), vhat, ghat, rref, g, mode) + Fref.*mode;
+        F(:,:,k) = min(max(F(:,:,k), Fmax(:,1)), Fmax(:,2));
+        F(3,5,k) = max(0, F(3,5,k));
+        kprev = k;
+    else
+        F(:,:,k) = F(:,:,k-1);
+    end
     
     if mod(k*framerate*dt,1) == 0
         figure(1);
@@ -81,16 +89,16 @@ for k = 1:N-1
     w(:,k+1) = w1;
 end
 figure(2);
-% plotPosition(t, x);
-% figure(3);
-% subplot(2,2,1);
-% plotInput(t, F, 0);
-% subplot(2,2,2);
+plotPosition(t, x);
+figure(3);
+subplot(2,2,1);
+plotInput(t, F, 0);
+subplot(2,2,2);
 plotInput(t, F, 1);
-% subplot(2,2,3);
-% plotInput(t, F, 2);
-% subplot(2,2,4);
-% plotInput(t, F, 3);
+subplot(2,2,3);
+plotInput(t, F, 2);
+subplot(2,2,4);
+plotInput(t, F, 3);
 
 function vhat = skew(v)
     vhat = [0, -v(3), v(2); v(3) 0 -v(1); -v(2) v(1) 0];
@@ -160,6 +168,31 @@ function ghat = estimateGravity(q, g, accel)
 end
 
 % Compute desired contact forces (3x4)
+function X = getControlQP(rhat, vhat, ghat, r0, g0, mode)
+    if nargin < 3
+        mode = ones(5);
+    end
+    W = diag([ones(3,1)*mode(1);ones(3,1)*mode(2);
+              ones(3,1)*mode(3);ones(3,1)*mode(4);mode(5)]);
+    kp = 5;
+    kd = 2;
+%     F = -kp*(r0 - rhat) - kd*vhat; % decentralized control
+
+    G = getG([0;0;0], rhat, mode);
+%     G0 = getG([0;0;0], rhat);
+    Ginv = W*pinv(G*W);%*(1-min(mode)) + pinv(G0)*min(mode);
+    xf = reshape(r0(:,1:4)-rhat(:,1:4), 12, 1);
+    vf = reshape(-vhat(:,1:4), 12, 1);
+    xf = [xf; r0(3,5) - rhat(3,5)];
+    vf = [vf; -vhat(3,5)];
+    F = kp*(kp*Ginv'*xf + kd*Ginv'*vf) + [ghat; 0;0;0];
+    N = [0 0 0 0; 0 0 0 0; 1 1 1 1];
+    yaw = [-1 1 -1 1]*15;
+    mirror = [-1 1 -1 1];
+    
+    X = InwardGraspQP(F, r0, N, yaw, mirror, mode);
+end
+
 function F = getControl(rhat, vhat, ghat, r0, g0, mode)
     if nargin < 3
         mode = ones(5);
@@ -167,7 +200,7 @@ function F = getControl(rhat, vhat, ghat, r0, g0, mode)
     W = diag([ones(3,1)*mode(1);ones(3,1)*mode(2);
               ones(3,1)*mode(3);ones(3,1)*mode(4);mode(5)]);
     kp = 50;
-    kd = 5;
+    kd = 1;
 %     F = -kp*(r0 - rhat) - kd*vhat; % decentralized control
 
     G = getG([0;0;0], rhat, mode);
