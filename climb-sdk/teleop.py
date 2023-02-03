@@ -5,6 +5,7 @@ import datetime
 
 import matplotlib.pyplot as plt
 import sys
+import time
 
 from behaviors import *
 
@@ -23,14 +24,14 @@ class Terminal:
         self.status = ["Loading", "", ""]
         self.t = 0
         self.quit = False
-        self.stdout = sys.stdout
-        self.f_max_l = [0, 0, 0, 0, 0]  # Z X Y Angle Magnitude
-        self.f_max_r = [0, 0, 0, 0, 0]  # Z X Y Angle Magnitude
         self.i = 0
         self.log = np.zeros((31, 0))
         sys.stdout = self.buffer = buffer
 
     def log_force(self, robot, t):
+        """
+        Record the current measured and setpoint forces for future export and plotting
+        """
         leg_forces = np.array(list(leg.get_force(relative=True) for leg in robot.get_legs())).flatten()
         tail_force = robot.tail.get_force()
         if len(robot.state.f_goal):
@@ -41,21 +42,12 @@ class Terminal:
             goal_force = np.zeros(15)
         data = np.vstack((t, *leg_forces, *tail_force, *goal_force))
         self.log = np.append(self.log, data, axis=1)
-        # x1 y1 z1 x2 y2 z2 x3 y 3 z3 x4 y4 z4
-        x, y, z = leg_forces[0:3]
-        if z < self.f_max_l[0]:
-            mag = np.sqrt(x ** 2 + y ** 2 + np.maximum(0, -z) ** 2)
-            ang = np.rad2deg(np.arctan2(np.maximum(0, -z), np.sqrt(x ** 2 + y ** 2)))
-            self.f_max_l = [z, x, y, ang, mag]
-        x, y, z = leg_forces[3:6]
-        if z < self.f_max_l[0]:
-            mag = np.sqrt(x ** 2 + y ** 2 + np.maximum(0, -z) ** 2)
-            ang = np.rad2deg(np.arctan2(np.maximum(0, -z), np.sqrt(x ** 2 + y ** 2)))
-            self.f_max_r = [z, x, y, ang, mag]
-        # print("L ", np.array2string(np.array(self.f_max_l[:3]), precision=1))
-        # print("R ", np.array2string(np.array(self.f_max_r[:3]), precision=1))
 
     def plot_force(self, foot=(1, 2, 3, 4, 5), axis=(0, 1, 2), cost=0, **kwargs):
+        """
+        Plot the force on each foot
+        Log data format: t x1 y1 z1 ... x4 y4 z4 xt yt zt xg1 yg1 zg1 ...
+        """
         w = 10
         log = np.zeros((self.log.shape[0], self.log.shape[1] - w + 1))
         for i in range(0, self.log.shape[0]):
@@ -66,7 +58,6 @@ class Terminal:
         axis_labels = ("Lateral", "Tangential", "Normal")
         plt.xlabel('Time (s)')
         plt.ylabel('Force (N)')
-        # plt.ylim([-5, 5])
         if cost:
             if hasattr(foot, "__iter__"):
                 for f in (1, 2, 3, 4):
@@ -86,14 +77,12 @@ class Terminal:
                         c = p[0].get_color()
                         plt.plot(log[0, :], mag_g, linestyle='dashed', color=c, **kwargs)
                         plt.title('Adhesion Magnitude')
-                        # plt.ylim([0, 10])
                     elif cost == 2:
                         p = plt.plot(log[0, :], ang, label=label, **kwargs)
                         c = p[0].get_color()
                         plt.plot(log[0, :], ang_g, linestyle='dashed', color=c, **kwargs)
                         plt.title('Adhesion Angle')
                         plt.ylabel('Angle (deg)')
-                        # plt.ylim([0, 45])
                 plt.legend()
         elif hasattr(foot, "__iter__"):
             for f in foot:
@@ -127,6 +116,9 @@ class Terminal:
         plt.show()
 
     def save_log(self):
+        """
+        Export all force data to a time-stamped CSV
+        """
         date = "{date:%Y-%m-%d-%H-%M-%S}".format(date=datetime.datetime.now())
         name = f'log/Force_Data_{date}.csv'
         np.savetxt(name, self.log.T, delimiter=',', header="t, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, "
@@ -180,7 +172,7 @@ class Terminal:
                 self.terminal.addstr((self.status[i].replace("\n", " \\ ") + "\n")[:x - 1])
         self.terminal.addstr(("> " + self.command_text)[:x - 1])
         if self.i < len(buffer):
-            self.stdout.write(buffer[self.i:])
+            sys.__stdout__.write(buffer[self.i:])
             self.i = len(buffer)
 
     def execute(self, command, robot):
@@ -237,7 +229,7 @@ class Terminal:
             print(t + f"Invalid command: {command}")
             pass
         if c == "l":  # quit
-            sys.stdout = self.stdout
+            sys.stdout = sys.__stdout__
             self.quit = True
         elif c == " ":
             robot.set_behavior(None)
@@ -252,7 +244,7 @@ class Terminal:
             robot.set_behavior(walk)
             print(t + "Walk")
         elif c == "c":
-            robot.set_behavior(climb2)
+            robot.set_behavior(climb)
             print(t + "Climb")
         elif c == "z":
             robot.set_behavior(test_grasp)
@@ -275,8 +267,6 @@ class Terminal:
         elif c == "y":
             print("Reset log")
             self.log = np.zeros((self.log.shape[0], 0))
-            self.f_max_l = [0, 0, 0, 0, 0]
-            self.f_max_r = [0, 0, 0, 0, 0]
         elif c in "1234":
             i = int(c)
             if robot.state.weights[i - 1] > 0:
@@ -288,15 +278,13 @@ class Terminal:
         elif c == "r":
             print(t + "Retry step")
             robot.state.step -= 1
-            robot.set_behavior(climb2)
+            robot.set_behavior(climb)
         elif c == ";":
             print(t + "Plotting force")
             self.plot_force(axis=0)
             self.plot_force(axis=1)
             self.plot_force(axis=2)
             self.plot_force(foot=1)
-            self.plot_force(cost=1)
-            self.plot_force(cost=2)
             self.save_log()
         elif c == " ":
             if robot.state.teleop:
@@ -308,7 +296,7 @@ class Terminal:
                 leg.set_torque(0, 0, 0)
         elif c == "o":
             if robot.controller == control_off:
-                robot.set_controller(centralized_admittance)
+                robot.set_controller(admittance)
                 reset_torque(robot)
                 print(t + "Control On")
             else:
@@ -326,6 +314,9 @@ def display_name(f):
 
 
 def display_variable(robot, leg_function, tail_function=None, **kwargs):
+    """
+    Evaluates the specified function and re-formats the value for easier display
+    """
     f = [leg_function(leg, **kwargs) for leg in robot.get_legs()]
     f.append(tail_function(robot.tail))
     print(", ".join([f'{fi:4.1f}' for fi in np.sum(np.array(f), 0)]))

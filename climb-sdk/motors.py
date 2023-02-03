@@ -3,7 +3,6 @@ Interface class for simultaneously controlling multiple Dynamixel motors
 """
 
 from dynamixel_sdk import *
-# import roslibpy        # pip install roslibpy, pip install service_identity
 
 # Supported motor series (with protocol version)
 SERIES = {"AX": 1, "XM": 2}
@@ -55,9 +54,6 @@ class Motors:
         self.status = "Disconnected"
         self.baud = baud
         self.connect()
-        # ros = roslibpy.Ros(host='localhost', port=9090)
-        # print(ros.is_connected)
-        # ros.run()
 
     def connect(self):
         """
@@ -317,10 +313,11 @@ class Motors:
                 sync_vel = GroupSyncWrite(self.portHandler, self.packetHandler2, *GOAL_VELOCITY_XM)
                 sync = GroupSyncWrite(self.portHandler, self.packetHandler2, *PROFILE_VELOCITY_XM)
                 for motor in motor_list:
-                    raw = motor.set_velocity / 0.229 / 6
-                    if not motor.velocity_mode:
+                    if motor.velocity_mode:
+                        raw = motor.set_velocity * motor.mirror / 0.229 / 6
                         sync_vel.addParam(motor.id, float2bytes(raw, sync.data_length))
                     else:
+                        raw = motor.set_velocity / 0.229 / 6
                         sync.addParam(motor.id, float2bytes(raw, sync.data_length))
                 if sync_vel.is_param_changed and self.opened:
                     sync_vel.txPacket()

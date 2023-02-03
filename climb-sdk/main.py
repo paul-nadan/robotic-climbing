@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+import sys
 
 from motors import Motors
-from robot import Robot, Leg, TailJoint
+from robot import Robot
 from behaviors import *
-from teleop import Terminal, display_name, display_variable
+from teleop import Terminal, display_name
 from serial import SerialException
 import io
 import time
@@ -19,6 +20,7 @@ def main_loop(terminal, buffer):
         port = "/dev/ttyUSB0"   # Linux
     robot = Robot(Motors(port=port, baud=1000000))
     robot.motors.enable()
+    robot.tail.set_torque(robot.tail.get_torque(goal=True), direct=True)  # apply torque limits
     robot.set_behavior(sprawl)
     robot.set_controller(control_off)
 
@@ -26,30 +28,27 @@ def main_loop(terminal, buffer):
     t0 = t                      # start time for loop counter in seconds
     loops = 0                   # loop counter for timing code
     while not interface.quit:
-        robot.motors.read_angle()  # 12 ms
+        robot.motors.read_angle()   # 12 ms
         robot.motors.read_torque()  # 12 ms
 
         dt = time.perf_counter() - t
         t += dt
-        if dt > 1:  # Timeout
+        if dt > 1:              # Timeout
             continue
 
-        interface.teleop(robot, dt)
-        interface.display()
+        interface.teleop(robot, dt)     # Check for operator input
+        interface.display()             # Update the display
         if robot.behavior:
-            robot.behavior(robot, dt)  # 0-1 ms
-        robot.controller(robot, dt)  # 2 ms (admittance) + 1.5 ms (QP)
+            robot.behavior(robot, dt)   # 1 ms
+        robot.controller(robot, dt)     # 2 ms (admittance) + 1.5 ms (QP)
 
-        robot.motors.write_angle()  # 1 ms
-        robot.tail.set_torque(robot.tail.get_torque(goal=True), direct=True)
-        robot.motors.write_torque()  # 1 ms
+        robot.motors.write_angle()      # 1 ms
+        robot.motors.write_torque()     # 1 ms
 
         loops += 1
-        # print(str(t) + "\t" + "\t".join([f'{f:.4f}' for f in robot.fl.get_force(relative=True)]))
         interface.log_force(robot, t)
-        # print(display_variable(robot, Leg.get_force, TailJoint.get_force))
-        # print(np.array2string(np.array(robot.legs[2].get_torque()), precision=1, suppress_small=True),
-        #       np.array2string(np.array(robot.legs[2].get_force(relative=True)), precision=1, suppress_small=True))
+
+        # Update the status
         if t - t0 > 0.25:
             robot.motors.read_voltage()
             robot.motors.read_temp()
@@ -63,15 +62,15 @@ def main_loop(terminal, buffer):
                                   f"{volt}V ---"
             interface.status[1] = str(robot.state.controller_display)
             interface.status[2] = str(robot.state.behavior_display)
-            # print([[f'F {f:.1f}' for f in leg.get_force(relative=False)] for leg in robot.get_legs()])
-            # print([[f'T {f:.1f}' for f in leg.get_force(relative=True)] for leg in robot.get_legs()])
             t0 = t
             loops = 0
+
+            # Temperature failsafe
             if temp > 70:   # AX limit is 75, XM limit is 80
                 robot.motors.disable()
                 for motor in robot.motors.get():
                     if motor.temperature > 70:
-                        print(f"TEMPERATURE OVERRIDE: motor {motor.id} at {motor.temperature}°C")
+                        print(f"TEMPERATURE UNSAFE: motor {motor.id} at {motor.temperature}°C")
 
 
 if __name__ == "__main__":
@@ -85,3 +84,5 @@ if __name__ == "__main__":
             print(s, end="")
     except SerialException:
         print("Disconnected")
+    finally:
+        sys.stdout = sys.__stdout__
