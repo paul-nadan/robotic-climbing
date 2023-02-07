@@ -65,7 +65,7 @@ def admittance(robot, dt=0, init=False):
 
     # Compute optimal force
     if not state.preload:
-        f_goal = hang_simple(robot, wrench)                         # Optimal forces (3 x 5)
+        f_goal = hang_qp(robot, wrench)                         # Optimal forces (3 x 5)
         state.f_goal = f_goal
     else:
         f_goal = hang_simple(robot, wrench)                         # Optimal forces (3 x 5)
@@ -118,69 +118,6 @@ def skew(x, y, z):
     Return a 3x3 skew-symmetric matrix for the given vector
     """
     return np.array(((0, -z, y), (z, 0, -x), (-y, x, 0)))
-
-
-def hang_qp(robot, wrench, min_force=0, peel_angle=20):
-    """
-    Solve quadratic program to determine the optimal contact forces
-
-    :param robot: Robot object
-    :param wrench: Desired wrench on robot body
-    :param min_force: Minimum gripper force in Newtons
-    :param peel_angle: Maximum angle of applied force in degrees
-    :return: 3x5 matrix of desired foot and tail forces
-    """
-    N = np.array(((0, 0, 0, 0), (0, 0, 0, 0), (1, 1, 1, 1)))
-
-    H = np.eye(17)*0.1
-    f = np.zeros(17)
-    A = np.zeros((8, 17))
-    b = np.zeros(8)
-    Aeq = np.zeros((6, 17))
-    beq = np.array(wrench)
-    lb = np.zeros(17)
-    ub = np.ones(17)*np.infty
-    ub[[1, 5, 9, 13]] = 0.1
-    rot = [np.eye(3) for _ in range(4)]
-    r_hat = [np.eye(3) for _ in range(4)]
-    best_cost = -1
-    best_x = None
-    best_mirror = None
-    for i, leg in enumerate(robot.get_legs()):
-        ind4 = slice(i*4, i*4+4)
-        ind2 = slice(i*2, i*2+2)
-        rot[i] = get_transform(N[:, i], (0*robot.state.gripper_angles[i])
-                               * (-1 if leg.mirror else 1))
-        r_hat[i] = skew(*leg.get_pos(goal=False))
-        H[i*4:i*4+2, i*4:i*4+2] += 1
-        H[i*4+3, i*4+3] += 1
-        A[ind2, ind4] = -1*np.array(((1, -1, 0, 0), (tand(peel_angle), tand(peel_angle)/np.sqrt(2), 0, -1)))
-        b[i*2] = -min_force
-    Aeq[:3, -1] = robot.state.weights[-1] * np.array((0, 0, 1))
-    Aeq[3:, -1] = robot.state.weights[-1] * skew(*robot.tail.get_pos(goal=False)) @ (0, 0, 1)
-
-    for j in range(16):
-        mirror = np.array([j//8 % 2, j//4 % 2, j//2 % 2, j % 2])*2-1
-        for i in range(4):
-            ind4 = slice(i * 4, i * 4 + 4)
-            Aeq[:3, ind4] = robot.state.weights[i] * rot[i] @ np.array(((0, mirror[i], 0, 0),
-                                                                        (1, 0, 0, 0), (0, 0, 1, -1)))
-            Aeq[3:, ind4] = r_hat[i] @ Aeq[:3, ind4]
-        x = solve_qp(H, f, A, b, Aeq, beq, lb, ub, solver="quadprog")
-        if x is not None:
-            cost = 0.5 * x.T @ H @ x
-            if best_cost < 0 or cost < best_cost:
-                best_cost = cost
-                best_x = x
-                best_mirror = mirror
-    if best_x is None:
-        return np.zeros((3, 5))
-    forces = np.zeros((3, 5))
-    for i in range(4):
-        forces[:, i] = robot.state.weights[i] * rot[i] @ np.array(((0, best_mirror[i], 0, 0), (1, 0, 0, 0),
-                                                                   (0, 0, 1, -1))) @ best_x[i * 4: i * 4 + 4]
-    forces[:, -1] = (0, 0, best_x[-1])
-    return forces
 
 
 def hang_simple(robot, wrench, min_force=2):
@@ -240,6 +177,79 @@ def hang_simple(robot, wrench, min_force=2):
 
     forces = np.stack((np.zeros(5), forceT, forceN))
     # ratio = np.nanmax(-forces[2, :4]/forces[1, :4])
+    return forces
+
+
+def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_angle=45):
+    """
+        Solve quadratic program to determine the optimal contact forces
+
+        :param robot: Robot object
+        :param wrench: Desired wrench on robot body
+        :param min_force: Minimum gripper force in Newtons
+        :param max_force: Maximum gripper force in Newtons
+        :param peel_angle: Maximum angle of applied normal force in degrees
+        :param lateral_angle: Maximum angle of applied lateral force in degrees
+        :return: 3x5 matrix of desired foot and tail forces
+        """
+    # wrench = np.array((0, 20, 0, -1000, 0, 0))
+
+    N = np.array(((0, 0, 0, 0), (0, 0, 0, 0), (1, 1, 1, 1)))
+
+    # Cost
+    H = np.eye(18) * 0.01
+    f = np.zeros(18)
+    f[-1] = 1
+
+    # Constraints
+    A = np.zeros((12, 18))
+    b = np.zeros(12)
+    Aeq = np.zeros((6, 18))
+    beq = np.array(wrench)
+    lb = -np.ones(18) * np.infty
+    ub = np.ones(18) * np.infty
+    rot = [np.eye(3) for _ in range(4)]
+    r_hat = [np.eye(3) for _ in range(4)]
+    for i, leg in enumerate(robot.get_legs()):
+        ind4 = slice(i * 4, i * 4 + 4)
+        ind3 = slice(i * 3, i * 3 + 3)
+        w = robot.state.weights[i]
+        rot[i] = get_transform(N[:, i], 0 * (-1 if leg.mirror else 1))
+        r_hat[i] = skew(*leg.get_pos(goal=False))
+
+        # Force/torque balance
+        Aeq[:3, ind4] = rot[i] @ np.array(((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, -1)))
+        Aeq[3:, ind4] = r_hat[i] @ Aeq[:3, ind4]
+
+        # Force limits
+        A[ind3, ind4] = np.array(((0, -tand(peel_angle)*w, 0, w),       # Normal cost
+                                  (1, -tand(lateral_angle), 0, 0),      # Lateral constraint
+                                  (-1, -tand(lateral_angle), 0, 0)))    # Lateral constraint
+        A[i*3, -1] = -w                                                 # Normal cost
+
+        # Bounds
+        lb[ind4] = np.array((-max_force, min_force, 0, 0))*w
+        ub[ind4] = np.array((max_force, max_force, max_force, max_force))*w
+
+    # Tail
+    Aeq[:3, -2] = np.array((0, 0, 1))
+    Aeq[3:, -2] = skew(*robot.tail.get_pos(goal=False)) @ Aeq[:3, -2]
+    lb[-2] = 0
+    ub[-2] = max_force
+
+    x = solve_qp(H, f, A, b, Aeq, beq, lb, ub, solver="quadprog")
+
+    forces = np.zeros((3, 5))
+    if x is None:
+        print("Fail")
+        return hang_simple(robot, wrench)
+    for i in range(4):
+        ind4 = slice(i * 4, i * 4 + 4)
+        forces[:, i] = rot[i] @ np.array(((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, -1))) @ x[ind4]
+    forces[:, -1] = (0, 0, x[-2])
+    margin = -x[-1]/tand(peel_angle)
+    print(forces)
+    print(margin)
     return forces
 
 

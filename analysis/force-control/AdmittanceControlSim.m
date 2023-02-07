@@ -6,7 +6,7 @@ close all;
 
 k.period = 0.02;    % Controller update period (s)
 k.dt = 0.001;       % Simulation time step (s)
-k.tmax = 5;         % Simulation duration (s)
+k.tmax = 6;         % Simulation duration (s)
 k.ff = 1;           % Animation playback speed multiplier
 
 k.kp = .01;         % Controller gain (m/N)
@@ -51,17 +51,7 @@ r0 = p0 + [-1, 1, -1, 1, 0;
            -1, -1, -1, -1, -1] .* [k.w/2 + k.x0; k.l/2; k.h*2];
 x0 = [p0; q0; reshape(r0, [], 1); v0; w0];
 
-% face1 = [1 0 0 1; 1 1 0 0; 0 0 0 0];
-% face2 = face1 + [0;0;1];
-% prism(face1, face2, 'r');
-
-% cylinder([1;2;3], [4; 5; 6], 2, 'b')
-% plot3(1, 2, 3, 'r.', 'markersize', 50)
-% plot3(4, 5, 6, 'r.', 'markersize', 50)
-% axis equal
-% return
-
-r0 = r0 + (rand(3, 5) - 0.5) * .0; % Inject error
+r0 = r0 + (rand(3, 5) - 0.5) * .1; % Inject error
 [T, X, U, F, Fgoal] = simulate(x0, r0, k);
 
 frames = animate(T, X, F, k);
@@ -184,7 +174,7 @@ function [u, fgoal] = control(t, r, f, contacts, k)
 end
 
 function f = setpoints(wrench, contacts, k)
-    fmin = min(0*2, wrench(2)/4);
+    fmin = min(2, wrench(2)/4);
     r = k.l/2;
     L = k.tail/r + 1;
     g = wrench(2) - 4*fmin;
@@ -221,7 +211,7 @@ end
 % Specify which grippers are currently engaged
 function contacts = gait(t, k)
     contacts = ones(4, 1);
-    if t > 2.5
+    if t > 2 & t < 4
         contacts(1) = 0;
     end
 end
@@ -248,7 +238,7 @@ function frames = animate(T, X, F, k)
             clf;
             
             % Plot current state
-            drawrobot(X(:, i), k);
+            drawrobot(X(:, i), k, T(i));
             drawforces(X(:, i), F(:, i), k);
             
             % Set up figure window
@@ -273,7 +263,7 @@ function frames = animate(T, X, F, k)
 end
 
 % Draw the robot
-function drawrobot(x, k)
+function drawrobot(x, k, t)
     [p, q, r, ~, ~] = unpack(x);
     Rplot = vrrotvec2mat([1, 0, 0, pi/2]);
     R = q2R(q);
@@ -286,7 +276,9 @@ function drawrobot(x, k)
     r = Rplot*r;
     plot3(r(1,:), r(2,:), r(3,:), 'b.', 'markersize', 50);
     hold on;
-    plot3(r(1,3), r(2,3), r(3,3), 'r.', 'markersize', 50);
+    if t > 2 & t < 4
+        plot3(r(1,1), r(2,1), r(3,1), 'r.', 'markersize', 50);
+    end
     for i = 1:5
         plot3([r(1, i), c(1, i)], [r(2, i), c(2, i)], ...
             [r(3, i), c(3, i)], 'k', 'linewidth', 5);
