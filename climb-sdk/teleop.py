@@ -294,6 +294,7 @@ class Terminal:
             print(t + "Zero torque")
             for leg in robot.legs.values():
                 leg.set_torque(0, 0, 0)
+            robot.tail.set_torque(0)
         elif c == "o":
             if robot.controller == control_off:
                 robot.set_controller(admittance)

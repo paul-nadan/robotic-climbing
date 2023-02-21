@@ -180,7 +180,7 @@ def hang_simple(robot, wrench, min_force=2):
     return forces
 
 
-def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_angle=45):
+def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_angle=30):
     """
         Solve quadratic program to determine the optimal contact forces
 
@@ -197,39 +197,38 @@ def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_ang
     N = np.array(((0, 0, 0, 0), (0, 0, 0, 0), (1, 1, 1, 1)))
 
     # Cost
-    H = np.eye(18) * 0.01
-    f = np.zeros(18)
+    H = np.eye(14) * 0.01
+    f = np.zeros(14)
     f[-1] = 1
 
     # Constraints
-    A = np.zeros((12, 18))
+    A = np.zeros((12, 14))
     b = np.zeros(12)
-    Aeq = np.zeros((6, 18))
+    Aeq = np.zeros((6, 14))
     beq = np.array(wrench)
-    lb = -np.ones(18) * np.infty
-    ub = np.ones(18) * np.infty
+    lb = -np.ones(14) * np.infty
+    ub = np.ones(14) * np.infty
     rot = [np.eye(3) for _ in range(4)]
     r_hat = [np.eye(3) for _ in range(4)]
     for i, leg in enumerate(robot.get_legs()):
-        ind4 = slice(i * 4, i * 4 + 4)
         ind3 = slice(i * 3, i * 3 + 3)
         w = robot.state.weights[i]
         rot[i] = get_transform(N[:, i], 0 * (-1 if leg.mirror else 1))
         r_hat[i] = skew(*leg.get_pos(goal=False))
 
         # Force/torque balance
-        Aeq[:3, ind4] = rot[i] @ np.array(((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, -1)))
-        Aeq[3:, ind4] = r_hat[i] @ Aeq[:3, ind4]
+        Aeq[:3, ind3] = rot[i]
+        Aeq[3:, ind3] = r_hat[i] @ Aeq[:3, ind3]
 
         # Force limits
-        A[ind3, ind4] = np.array(((0, -tand(peel_angle)*w, 0, w),       # Normal cost
-                                  (1, -tand(lateral_angle), 0, 0),      # Lateral constraint
-                                  (-1, -tand(lateral_angle), 0, 0)))    # Lateral constraint
-        A[i*3, -1] = -w                                                 # Normal cost
+        A[ind3, ind3] = np.array(((0, -tand(peel_angle)*w, -w),     # Normal cost
+                                  (1, -tand(lateral_angle), 0),     # Lateral constraint
+                                  (-1, -tand(lateral_angle), 0)))   # Lateral constraint
+        A[i*3, -1] = -w                                             # Normal cost
 
         # Bounds
-        lb[ind4] = np.array((-max_force, min_force, 0, 0))*w
-        ub[ind4] = np.array((max_force, max_force, max_force, max_force))*w
+        lb[ind3] = np.array((-max_force, min_force, -max_force))*w
+        ub[ind3] = np.array((max_force, max_force, max_force))*w
 
     # Tail
     Aeq[:3, -2] = np.array((0, 0, 1))
@@ -242,10 +241,10 @@ def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_ang
     forces = np.zeros((3, 5))
     if x is None:
         print("Fail")
-        return hang_simple(robot, wrench)
+        return 0*hang_simple(robot, wrench)
     for i in range(4):
-        ind4 = slice(i * 4, i * 4 + 4)
-        forces[:, i] = rot[i] @ np.array(((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, -1))) @ x[ind4]
+        ind3 = slice(i * 3, i * 3 + 3)
+        forces[:, i] = rot[i] @ x[ind3]
     forces[:, -1] = (0, 0, x[-2])
     margin = -x[-1]/tand(peel_angle)
     print(forces)

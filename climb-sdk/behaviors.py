@@ -344,7 +344,7 @@ def get_stance(robot, offset=0):
     return x
 
 
-def test_grasp(robot, dt=0, init=False, term=False, foot=2, pitch=30, yaw=0, ft=5, fn=4, fmax=15, n=10):
+def test_grasp(robot, dt=0, init=False, term=False, foot=2, pitch=30, yaw=-60, ft=5, fn=4, fmax=25, n=10):
     """
     Attempt a grasp with specified leg and record the force at failure
     """
@@ -372,27 +372,33 @@ def test_grasp(robot, dt=0, init=False, term=False, foot=2, pitch=30, yaw=0, ft=
     if state.substep == 0:  # Raise foot
         if leg.move_to_position(dt, x=state.x0, y=state.y0, z=state.z0, relative=True):
             advance = True
-    elif state.substep == 1:  # Lower foot
+    elif state.substep == 1:  # Raise foot
+        if state.t > 1:
+            advance = True
+    elif state.substep == 2:  # Lower foot
         leg.move_in_direction(dt, 0, 0, -1, relative=True, v=30)
         if fz > fn:
             advance = True
-    elif state.substep == 2:  # Engage foot
-        leg.move_in_direction(dt, 0, -1, 0, relative=True, v=30)
+    elif state.substep == 3:  # Engage foot
+        if fz > fn:
+            leg.move_in_direction(dt, 0, -1, 0, relative=True, v=30)
+        else:
+            leg.move_in_direction(dt, 0, -1, -1, relative=True, v=30)
         if fy > ft:
             advance = True
         if y - state.y0 < -100:  # Failed to engage
             state.substep = 0
             return
-    elif state.substep == 3:  # Load foot
-        oob = leg.move_in_direction(dt, 0, -cosd(pitch), sind(pitch), relative=True, v=30)
+    elif state.substep == 4:  # Load foot
+        oob = leg.move_in_direction(dt, -cosd(pitch)*sind(yaw), -cosd(pitch)*cosd(yaw), sind(pitch), relative=True, v=30)
         # if fy > state.f[1]:
-        if fz < state.f[2]:
+        if fy > state.f[1]:
             state.f = (fx, fy, fz)
         if oob or fy > fmax or fy < ft/2:
             state.fail = fy < ft
             advance = True
             print(f'[{state.f[0]}, {state.f[1]}, {state.f[2]}, {state.fail * 1}]')
-    elif state.substep == 4:  # Unload foot
+    elif state.substep == 5:  # Unload foot
         reset_angle(robot)
         if leg.move_to_position(dt, x=state.x0, y=state.y0, relative=True):
             advance = True
@@ -405,3 +411,4 @@ def test_grasp(robot, dt=0, init=False, term=False, foot=2, pitch=30, yaw=0, ft=
             state.f = (0, 0, 0)
     if advance:
         state.substep += 1
+        state.t = 0

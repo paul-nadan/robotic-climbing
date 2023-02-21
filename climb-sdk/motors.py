@@ -424,7 +424,8 @@ class Motors:
             if series == "AX":
                 for motor in motor_list:
                     raw, _, _ = self.packetHandler1.readTxRx(self.portHandler, motor.id, *PRESENT_TEMPERATURE_AX)
-                    motor.temperature = bytes2float(raw)
+                    if bytes2float(raw):
+                        motor.temperature = bytes2float(raw)
             elif series == "XM":
                 sync = GroupSyncRead(self.portHandler, self.packetHandler2, *PRESENT_TEMPERATURE_XM)
                 for motor in motor_list:
@@ -432,14 +433,15 @@ class Motors:
                 sync.txRxPacket()
                 for motor in motor_list:
                     raw = sync.getData(motor.id, *PRESENT_TEMPERATURE_XM)
-                    motor.temperature = raw
+                    if raw:
+                        motor.temperature = raw
             else:
                 print("read_voltage not implemented yet for " + series + "series")
                 continue
 
 
 class Motor:
-    def __init__(self, id, model, lower, upper, mirror, protocol, speed, stall, offset, average_torque=3):
+    def __init__(self, id, model, lower, upper, mirror, protocol, speed, stall, offset, average_torque=5):
         """
         Create a Dynamixel motor object
 
