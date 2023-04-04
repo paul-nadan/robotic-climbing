@@ -21,7 +21,7 @@ def main_loop(terminal, buffer):
     robot = Robot(Motors(port=port, baud=1000000))
     robot.motors.enable()
     robot.tail.set_torque(robot.tail.get_torque(goal=True), direct=True)  # apply torque limits
-    robot.set_behavior(sprawl)
+    robot.set_behavior(stick)
     robot.set_controller(control_off)
 
     t = time.perf_counter()     # current time in seconds

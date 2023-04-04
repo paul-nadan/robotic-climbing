@@ -59,13 +59,15 @@ def admittance(robot, dt=0, init=False):
                         (state.weights[4],)))                       # Foot weight vector (13 x 1)
     G = (get_grasp_map(robot) * w)                                  # Weighted grasp map (6 x 13)
     f = get_force_vector(robot, goal=False)                         # Vector of forces applied by feet (13 x 1), 1 ms
+    print(w)
+    print(f)
     wrench = G @ f                                                  # Net wrench on body (6 x 1)
     G = G[:, :-1]                                                   # Remove tail for computing body displacement
     A = ((np.eye(13) * w)[:-1, :-1] - G.T @ np.linalg.pinv(G.T))    # Transformation to internal motion space (13 x 13)
 
     # Compute optimal force
     if not state.preload:
-        f_goal = hang_qp(robot, wrench)                         # Optimal forces (3 x 5)
+        f_goal = hang_qp(robot, wrench, state.f_override)           # Optimal forces (3 x 5)
         state.f_goal = f_goal
     else:
         f_goal = hang_simple(robot, wrench)                         # Optimal forces (3 x 5)
@@ -180,12 +182,13 @@ def hang_simple(robot, wrench, min_force=2):
     return forces
 
 
-def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_angle=30):
+def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=15, peel_angle=20, lateral_angle=30):
     """
         Solve quadratic program to determine the optimal contact forces
 
         :param robot: Robot object
         :param wrench: Desired wrench on robot body
+        :param f_goal: Dictionary of desired contact force vectors to override the solver
         :param min_force: Minimum gripper force in Newtons
         :param max_force: Maximum gripper force in Newtons
         :param peel_angle: Maximum angle of applied normal force in degrees
@@ -193,7 +196,8 @@ def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_ang
         :return: 3x5 matrix of desired foot and tail forces
         """
     # wrench = np.array((0, 20, 0, -1000, 0, 0))
-
+    print(wrench)
+    print(f_goal)
     N = np.array(((0, 0, 0, 0), (0, 0, 0, 0), (1, 1, 1, 1)))
 
     # Cost
@@ -212,7 +216,7 @@ def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_ang
     r_hat = [np.eye(3) for _ in range(4)]
     for i, leg in enumerate(robot.get_legs()):
         ind3 = slice(i * 3, i * 3 + 3)
-        w = robot.state.weights[i]
+        w = 0 if i+1 in f_goal else robot.state.weights[i]
         rot[i] = get_transform(N[:, i], 0 * (-1 if leg.mirror else 1))
         r_hat[i] = skew(*leg.get_pos(goal=False))
 
@@ -221,14 +225,19 @@ def hang_qp(robot, wrench, min_force=2, max_force=15, peel_angle=20, lateral_ang
         Aeq[3:, ind3] = r_hat[i] @ Aeq[:3, ind3]
 
         # Force limits
-        A[ind3, ind3] = np.array(((0, -tand(peel_angle)*w, -w),     # Normal cost
-                                  (1, -tand(lateral_angle), 0),     # Lateral constraint
-                                  (-1, -tand(lateral_angle), 0)))   # Lateral constraint
-        A[i*3, -1] = -w                                             # Normal cost
+        A[ind3, ind3] = w * np.array(((0, -tand(peel_angle), -1),       # Normal cost
+                                      (1, -tand(lateral_angle), 0),     # Lateral constraint
+                                      (-1, -tand(lateral_angle), 0)))   # Lateral constraint
+        A[i*3, -1] = -w                                                 # Normal cost
+        b[ind3] = 1-w
 
         # Bounds
-        lb[ind3] = np.array((-max_force, min_force, -max_force))*w
-        ub[ind3] = np.array((max_force, max_force, max_force))*w
+        if i+1 in f_goal:
+            lb[ind3] = f_goal[i+1]
+            ub[ind3] = lb[ind3] + 1e-3
+        else:
+            lb[ind3] = np.array((-max_force, min_force, -max_force))*w
+            ub[ind3] = np.array((max_force, max_force, max_force))*w + 1e-3
 
     # Tail
     Aeq[:3, -2] = np.array((0, 0, 1))
@@ -287,3 +296,24 @@ def cosd(a):
 
 def tand(a):
     return np.tan(np.deg2rad(a))
+
+
+if __name__ == "__main__":
+    np.set_printoptions(precision=2, suppress=True)
+    from motors import Motors
+    from robot import Robot
+
+    dxl = Motors()
+    robot_ = Robot(dxl)
+    robot_.state.weights = [1, 1, 1, 1, 1]
+    # robot_.state.weights = [1, 0, 1, 1, 1]
+    # force_ = {3: (0, 3, 4)}
+    # wrench_ = [0.96,    8.44,   -1.4,  -311.67,  138.07,   60.17]
+    # wrench = [-1.53,   10.99,   -0.67, -662.19,  320.79, -237.69]
+
+    # force_ = {}
+    # wrench_ = [0,    19.7,      0,   -1040.84,  0,  0]
+
+    wrench_ = [  -3.39,   12.64,   0,  -655.62, -356.31,  0]
+    force_ = {2: (0, 0, 0), 3: (0, 0, 0)}
+    hang_qp(robot_, wrench_, force_, min_force=0)

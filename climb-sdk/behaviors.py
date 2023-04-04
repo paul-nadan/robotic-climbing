@@ -154,6 +154,104 @@ def unload(robot, dt=0, init=False, term=False, leg=1, reload=True):
         state.weights[leg-1] = max(0, 1-state.t)
 
 
+def climb_new(robot, dt=0, init=False, term=False, teleop=False, trot=True):
+    substeps = ("Unload", "Disengage", "Swing", "Place", "Load", "Overload", "Stance", "Complete")
+    state = robot.state
+    if trot:
+        gait = ((1, 4), (2, 3))
+    else:
+        gait = ((3,), (1,), (4,), (2,))
+    swing = gait[state.step % len(gait)]
+    legs = [robot.legs[i] for i in swing]
+
+    if init or term:
+        state.substep = 0
+        state.t = 0
+        state.p0 = [leg.get_pos(relative=True, goal=False) for leg in legs]
+        state.x0, state.dy, state.z0 = robot.fl.get_pos(a1=A1_SPRAWL, a2=A2_SPRAWL[0], a3=A3_SPRAWL[0], relative=True)
+        state.teleop = False
+        state.advance = [False for leg in legs]
+        reset_torque(robot)
+        return
+
+    state.t += dt
+    substep = substeps[state.substep]
+    paw = False
+    state.f_override = {}
+    state.weights = [1, 1, 1, 1, 1]
+
+    for i, (foot, leg) in enumerate(zip(swing, legs)):
+        Fx, Fy, Fz = leg.get_force(relative=True)
+        dx, dy, dz = np.array(leg.get_pos(relative=True)) - np.array(state.p0[i])
+        if substep == "Unload":
+            state.f_override[foot] = (0, 0, 0)
+            state.advance[i] = Fy < 1
+            recenter(robot, dt)
+        elif substep == "Disengage":
+            state.weights[foot - 1] = 0
+            d = (0.5*cosd(2*state.t), max(0, 1-state.t), min(1, state.t))
+            d = [0, 1, 1]
+            if not state.advance[i]:
+                state.advance[i] = leg.move_in_direction(dt, *np.array(d), relative=True, v=500)
+            # recenter(robot, dt, swing=swing)
+        elif substep == "Swing":
+            state.weights[foot - 1] = 0
+            state.advance[i] = leg.move_to_position(dt, x=state.x0, y=state.dy, relative=True)
+            recenter(robot, dt, swing=swing)
+            if Fy < -4:  # Gripper is caught on surface
+                paw = True
+                print("Foot snag")
+        elif substep == "Place":
+            state.weights[foot - 1] = 0
+            d = (0, -0.2, -1)
+            state.advance[i] = Fz > 4
+            if not state.advance[i]:
+                leg.move_in_direction(dt, *d, relative=True, v=50)
+            recenter(robot, dt, swing=swing)
+            state.p0[i] = leg.get_pos(relative=True, goal=False)
+        elif substep == "Load":
+            print(np.array([Fx, Fy, Fz]))
+            state.f_override[foot] = (0, 3, 4)
+
+            # state.weights[foot - 1] = 0
+            # d = [0, -1, 0]
+            # leg.move_in_direction(dt, *np.array(d), relative=True, v=50)
+
+            state.advance[i] = Fy > 2.5
+            # recenter(robot, dt)
+            if dy < -60:
+                paw = True
+                print("Foot slip")
+        elif substep == "Overload":
+            state.advance[i] = True
+        elif substep == "Stance":
+            state.advance[i] = state.t > 1
+            recenter(robot, dt)
+            if dy < -60:
+                paw = True
+                print("Foot slip")
+        else:
+            state.step += 1
+            robot.set_behavior(climb)
+            return
+
+    if paw:
+        state.substep = 2
+        state.t = 0
+        state.advance = [False for leg in legs]
+        reset_torque(robot)
+        for leg_ in legs:
+            leg_.set_angle(*leg_.get_angle(), direct=True)
+            leg_.set_angle(*leg_.get_angle(), direct=False)
+    elif all(state.advance):
+        state.substep += 1
+        state.t = 0
+        state.advance = [False for leg in legs]
+        reset_torque(robot)
+    print(substep)
+    state.behavior_display = f"Substep: {'Teleop' if state.teleop else substep}"
+
+
 def climb(robot, dt=0, init=False, term=False, teleop=False):
     """
     Sprawled climbing gait for admittance controller
@@ -248,7 +346,7 @@ def climb(robot, dt=0, init=False, term=False, teleop=False):
             print("------PAW------")
             leg.set_angle(*leg.get_angle(), direct=True)
             leg.set_angle(*leg.get_angle(), direct=False)
-        recenter(robot, dt, offset=1, swing=i_leg)
+        recenter(robot, dt, swing=(i_leg,))
     elif state.substep == 4:  # Engage foot (limit force, move foot down and into wall)
         leg.set_torque(T_DEFAULT_YAW, T_DEFAULT, T_DEFAULT)
         Fx, Fy, Fz = leg.get_force(relative=True)
@@ -275,12 +373,32 @@ def climb(robot, dt=0, init=False, term=False, teleop=False):
         elif Fx * cosd(a) + Fy * sind(a) > F_ENGAGE[1] + F_TOL:
             state.paw = False
             advance = True
-            state.weights[GAIT_ORDER[state.step % 4] - 1] = 1
+            # state.weights[GAIT_ORDER[state.step % 4] - 1] = 1
             leg.set_angle(*leg.get_angle(), direct=True)
             leg.set_angle(*leg.get_angle(), direct=False)
             state.gripper_angles[i_leg - 1] = 90  # state.gripper_offsets[i_leg - 1] + leg.yaw_motor.goal_angle
-    elif state.substep == 5:  # Recenter body
-        recenter(robot, dt, offset=1)
+    elif state.substep == 5:  # Test foothold
+        advance = True
+        # Fx, Fy, Fz = leg.get_force(relative=True)
+        # leg.move_in_direction(dt, dz=1, relative=True, v=50)
+        # a = 90  # state.gripper_angles[i_leg - 1]
+        # x, y, z = leg.get_pos(relative=True)
+        # if (state.p[1] - y) * sind(a) + (state.p[0] - x) * cosd(a) > 10:
+        #     state.substep = 1
+        #     state.paw = True
+        #     advance = True
+        #     print("------PAW------")
+        #     leg.set_angle(*leg.get_angle(), direct=True)
+        #     leg.set_angle(*leg.get_angle(), direct=False)
+        # elif Fz < F_TOL:
+        #     state.paw = False
+        #     advance = True
+        #     state.weights[GAIT_ORDER[state.step % 4] - 1] = 1
+        #     leg.set_angle(*leg.get_angle(), direct=True)
+        #     leg.set_angle(*leg.get_angle(), direct=False)
+        #     state.gripper_angles[i_leg - 1] = 90  # state.gripper_offsets[i_leg - 1] + leg.yaw_motor.goal_angle
+    elif state.substep == 6:  # Recenter body
+        recenter(robot, dt)
         if state.t > 1:
             advance = True
         # TODO: Paw if tangential force on swing foot is below threshold (2N?)
@@ -295,12 +413,12 @@ def climb(robot, dt=0, init=False, term=False, teleop=False):
         robot.tail.set_torque(200)
     if advance:
         state.substep, state.t, state.p = state.substep + 1, 0, leg.get_pos(relative=True, goal=False)
-    substeps = ["Unload", "Disengage", "Lift", "Swing", "Engage", "Recenter",
+    substeps = ["Unload", "Disengage", "Lift", "Swing", "Engage", "Overload", "Recenter",
                 "Completed"]
     state.behavior_display = f"Substep: {'Teleop' if state.teleop else substeps[state.substep]}"
 
 
-def recenter(robot, dt=0, init=False, term=False, offset=0, swing=0):
+def recenter(robot, dt=0, init=False, term=False, swing=()):
     """
     Align the robot body to minimize twist from the standard sprawled posture
     """
@@ -310,10 +428,10 @@ def recenter(robot, dt=0, init=False, term=False, offset=0, swing=0):
     G_tail = get_grasp_map(robot)
     G = G_tail[:, :12]
     x = get_position_vector(robot, False)[:12]
-    x0 = get_stance(robot, offset)[:12]
+    x0 = get_stance(robot)[:12]
     dx = x0 - x
-    if swing:
-        dx[swing*3-1] = 0  # ignore swing z
+    for leg in swing:
+        dx[leg*3-1] = 0  # ignore swing foot z
     y = G_tail.T @ np.diag([1, 1, 1, 1, 1, 0]) @ np.linalg.pinv(G).T @ dx
     d_max = 0
     for i in range(4):
@@ -327,19 +445,13 @@ def recenter(robot, dt=0, init=False, term=False, offset=0, swing=0):
     robot.tail.set_pos(robot.tail.get_pos(goal=True)[2] + dt * v_tail * np.sign(y[12]))
 
 
-def get_stance(robot, offset=0):
+def get_stance(robot):
     """
     Get the robot's sprawled posture at the current step index
     """
     x = np.zeros(13)
-    yaws = [A1_SPRAWL, A1_SPRAWL/3, -A1_SPRAWL/3, -A1_SPRAWL]
-    offsets = [2, 0, 3, 1]
     for i in range(4):
-        if robot.state.step + offset:
-            yaw = 0*yaws[(robot.state.step+offset+offsets[i]) % 4]
-        else:
-            yaw = 0
-        x[i*3:i*3+3] = robot.legs[i + 1].get_pos(yaw, A2_SPRAWL[i], A3_SPRAWL[i])
+        x[i*3:i*3+3] = robot.legs[i + 1].get_pos(0, A2_SPRAWL[i], A3_SPRAWL[i])
     x[-1] = robot.tail.get_pos(TAIL_SPRAWL)[2]
     return x
 

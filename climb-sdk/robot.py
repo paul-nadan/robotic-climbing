@@ -2,8 +2,7 @@
 Evaluate current robot state and modify setpoints using forward and inverse kinematics
 """
 from types import SimpleNamespace
-
-from controllers import *
+import numpy as np
 
 # Motor limits (deg)
 YAW_LIMIT_MIN = -70
@@ -46,7 +45,7 @@ KM = 30     # Expected robot weight (N)
 
 
 class Robot:
-    def __init__(self, motors, controller=control_off):
+    def __init__(self, motors, controller=None):
         yaw = motors.add([1, 2, 3, 4], 'XM430-W350-T', lower=YAW_LIMIT_MIN, upper=YAW_LIMIT_MAX)
         shoulder = motors.add([5, 6, 7, 8], 'AX18-A', lower=SHOULDER_LIMIT_MIN, upper=SHOULDER_LIMIT_MAX, mirror=(6, 7))
         knee = motors.add([9, 10, 11, 12], 'AX18-A', lower=KNEE_LIMIT_MIN, upper=KNEE_LIMIT_MAX, mirror=(10, 11),
@@ -63,6 +62,7 @@ class Robot:
         state.teleop_key = None
         state.preload = False
         state.f_goal = ()
+        state.f_override = {}
         state.controller_display = ""
         state.behavior_display = ""
         state.weights = [1, 1, 1, 1, 1]
@@ -94,6 +94,7 @@ class Robot:
             self.behavior(self, term=True)  # Terminate old behavior
         if behavior:
             self.behavior = lambda r, dt=0, init=False, term=False: behavior(r, dt, init, term, *args, **kwargs)
+            self.behavior.__name__ = behavior.__name__
         else:
             self.behavior = None
         self.state.behavior_display = ""
@@ -546,8 +547,8 @@ class Leg:
             return True
         if v is None or v > v_max:
             v = v_max
-        if d < v * dt:
-            self.move_in_direction(dt, dx, dy, dz, d / dt, relative=relative)
+        if d < v * dt / 2:
+            self.move_in_direction(dt, dx, dy, dz, d / dt / 2, relative=relative)
             return True
         self.move_in_direction(dt, dx, dy, dz, v, relative=relative)
         return False
@@ -844,8 +845,21 @@ class BodyJoint:
             self.motor.goal_torque = t
 
 
+def sind(a):
+    return np.sin(np.deg2rad(a))
+
+
+def cosd(a):
+    return np.cos(np.deg2rad(a))
+
+
+def tand(a):
+    return np.tan(np.deg2rad(a))
+
+
 if __name__ == "__main__":
     from motors import Motors
+    from controllers import *
 
     dxl = Motors()
     robot = Robot(dxl)

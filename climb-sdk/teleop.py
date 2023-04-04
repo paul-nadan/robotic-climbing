@@ -238,7 +238,7 @@ class Terminal:
             robot.set_behavior(stand)
             print(t + "Stand")
         elif c == "s":
-            robot.set_behavior(sprawl)
+            robot.set_behavior(stick)
             print(t + "Sprawl")
         elif c == "w":
             robot.set_behavior(walk)
