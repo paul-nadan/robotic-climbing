@@ -63,14 +63,17 @@ phi = linspace(0, pi/2, 900+1)';
 phi = phi(1:end-1);
 F = 2*sin(phi+theta)./(2*cos(theta).*sin(theta));
 F2 = 2*sin(-phi+theta)./(2*cos(theta).*sin(theta));
+F = (F + F2)/2;
 F(theta < phi) = NaN;
 W = 1./F;
+
+theta = theta*2;
 
 figure(1);
 imagesc(rad2deg(theta), rad2deg(phi), W)
 xlabel('Splay Angle')
 ylabel('Force Angle')
-title('Maximum Load')
+title('Relative Load')
 colorbar
 caxis([0,1])
 set(gca,'YDir','normal')
@@ -79,8 +82,10 @@ figure(2);
 [~,I] = min(F, [], 2, 'omitnan');
 theta_opt = theta(I);
 plot(rad2deg(phi), rad2deg(theta_opt));
-xlabel('Force Angle');
+xlabel('Maximum Force Angle');
 ylabel('Optimal Splay Angle');
+xlim([0,90]);
+ylim([0,180]);
 
 figure(3);
 Fopt = F(:,I);
@@ -90,7 +95,8 @@ end
 Fmax = max(Fopt, [], 1);
 plot(rad2deg(phi), 1./Fmax);
 xlabel('Force Angle');
-ylabel('Maximum Load');
+ylabel('Tangential Force Ratio');
+xlim([0,90]);
 
 figure(4);
 y = [-1; 0; 1];

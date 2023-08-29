@@ -121,12 +121,15 @@ plot(x*k, x*k, 'r');
 plot((1+x)*k, (1-x)*k, 'r');
 
 %% Original
-n = 2;
+close all
+x = [2, 3, 5, 10];
+for n = x
+% n = 2;
 k = 1000;
-
-Theta = linspace(0, 90, 180+1);
-Theta = Theta(2:end-1);
-Phi = linspace(0, 90, 180*k+1)';
+% Theta = linspace(0, 90, 180+1);
+% Theta = Theta(2:end-1);
+Theta = 45;
+Phi = linspace(0, 90, 180*k*5+1)';
 Phi = Phi(1:end-1);
 dphi = Phi(1+k) - Phi(1);
 
@@ -139,7 +142,7 @@ for i = 1:length(Phi)
         angles = linspace(-theta, theta, n);
         F = 1/sum(cosd(angles-phi).^2);
         Fi = F*cosd(angles-phi);
-        Fmax = max(Fi);
+        Fmax = min(Fi);
         Fb = sum(Fi.*cosd(angles-phi));
         Ft = sum(Fi.*sind(angles-phi));
         w = [1, Ft];
@@ -178,15 +181,21 @@ ylim([0,90]);
 xlim([0,90]);
 
 figure(3);
-Fopt = F(:,I);
-for i = 1:length(phi)
-    Fopt(i+1:end, i) = 0;
-end
-Fmax = max(Fopt, [], 1);
-Fmax(I==1) = Inf;
-plot(phi, 1./Fmax);
+% Fopt = F(:,I);
+% for i = 1:length(phi)
+%     Fopt(i+1:end, i) = 0;
+% end
+% Fmax = max(Fopt, [], 1);
+% Fmax(I==1) = Inf;
+
+Fmax = F;
+
+plot(phi, Fmax, 'DisplayName', num2str(n));
 xlabel('Force Angle');
-ylabel('Maximum Load');
-title(['Gripper ' num2str(n)])
-ylim([0,1]);
-return
+ylabel('Minimum Carriage Load Ratio');
+legend
+hold on
+% title(['Gripper ' num2str(n)])
+title('Carriage Number');
+% ylim([0,1]);
+end

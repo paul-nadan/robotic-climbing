@@ -4,9 +4,11 @@ Carry out useful motions
 
 from controllers import *
 from robot import cosd, sind
+import math
 
 A1_SPRAWL = 45  # Swing leg maximum yaw angle in deg
-A2_SPRAWL = (-45, -45, -45, -45)  # -45  # Sprawl shoulder angle in deg
+A2_SPRAWL = (-30, -30, -30, -30)  # -45  # Sprawl shoulder angle in deg
+# A2_SPRAWL = (-45, -45, -45, -45)  # -45  # Sprawl shoulder angle in deg
 A3_SPRAWL = (30, 30, 30, 30)  # 30  # Sprawl knee angle in deg
 BODY_SPRAWL = 0  # Sprawl body angle in deg
 TAIL_SPRAWL = -20  # Sprawl tail angle in deg
@@ -252,7 +254,7 @@ def climb_new(robot, dt=0, init=False, term=False, teleop=False, trot=True):
     state.behavior_display = f"Substep: {'Teleop' if state.teleop else substep}"
 
 
-def climb(robot, dt=0, init=False, term=False, teleop=False):
+def climb(robot, dt=0, init=False, term=False, teleop=True):
     """
     Sprawled climbing gait for admittance controller
     """
@@ -273,7 +275,7 @@ def climb(robot, dt=0, init=False, term=False, teleop=False):
         state.disengage_step = 0
     state.t += dt
 
-    if state.teleop:
+    if state.teleop or state.teleop_key:
         v = None
         if state.teleop_key == "w":
             leg.move_in_direction(dt, 0, 1, 0, v, relative=False)
@@ -291,6 +293,8 @@ def climb(robot, dt=0, init=False, term=False, teleop=False):
             state.teleop = False
             state.t = 0
         state.teleop_key = None
+        if state.teleop:
+            recenter(robot, dt, swing=(1, 2, 3, 4))
     elif state.substep == 0:  # Set foot weight to zero, lower goal force to disengagement limit
         scale = (1 - state.t) + T_DISENGAGE * state.t
         leg.set_torque(scale*T_DEFAULT_YAW, scale*T_DEFAULT, scale*T_DEFAULT)
@@ -302,7 +306,7 @@ def climb(robot, dt=0, init=False, term=False, teleop=False):
             state.disengage_step = 0
     elif state.substep == 1:  # Raise foot while Fz > 0 and disengage foot while Fy > 0
         Fx, Fy, Fz = leg.get_force(relative=True)
-        a = 90  # state.gripper_angles[i_leg - 1]
+        a = 90 - 30 * math.copysign(1, Fx)  # state.gripper_angles[i_leg - 1]
         d = [D_DISENGAGE[0] * sind(a) + D_DISENGAGE[1] * cosd(a),
              -D_DISENGAGE[0] * cosd(a) + D_DISENGAGE[1] * sind(a),
              D_DISENGAGE[2]]
@@ -341,7 +345,7 @@ def climb(robot, dt=0, init=False, term=False, teleop=False):
         Fx, Fy, Fz = leg.get_force(relative=True)
         if Fy < -4:  # Gripper is caught on surface
             state.substep = 1
-            state.paw = True
+            # state.paw = True
             advance = True
             print("------PAW------")
             leg.set_angle(*leg.get_angle(), direct=True)
@@ -432,7 +436,10 @@ def recenter(robot, dt=0, init=False, term=False, swing=()):
     dx = x0 - x
     for leg in swing:
         dx[leg*3-1] = 0  # ignore swing foot z
-    y = G_tail.T @ np.diag([1, 1, 1, 1, 1, 0]) @ np.linalg.pinv(G).T @ dx
+    if swing == (1, 2, 3, 4):
+        y = G_tail.T @ np.diag([1, 1, 0, 0, 0, 0]) @ np.linalg.pinv(G).T @ dx
+    else:
+        y = G_tail.T @ np.diag([1, 1, 1, 1, 1, 0]) @ np.linalg.pinv(G).T @ dx
     d_max = 0
     for i in range(4):
         d_max = max(d_max, np.linalg.norm(y[3 * i:3 * i + 3]))
@@ -456,7 +463,7 @@ def get_stance(robot):
     return x
 
 
-def test_grasp(robot, dt=0, init=False, term=False, foot=2, pitch=30, yaw=-60, ft=5, fn=4, fmax=25, n=10):
+def test_grasp(robot, dt=0, init=False, term=False, foot=2, pitch=30, yaw=0, ft=5, fn=4, fmax=25, n=10):
     """
     Attempt a grasp with specified leg and record the force at failure
     """

@@ -10,8 +10,8 @@ set(0,'defaultfigureposition',[400 100 900 750])
 % sym_contact_forces()
 % plot_contact_forces(-90, px, py, 1, 2)
 % plot_contact_forces_heatmap(px, py);
-% plot_contact_forces_heatmap_flat();
-plot_contact_forces_heatmap_xy();
+plot_contact_forces_heatmap_flat();
+% plot_contact_forces_heatmap_xy();
 
 %% Gripper load angle functions
 

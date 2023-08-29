@@ -182,7 +182,7 @@ class Terminal:
         :param robot: Robot to command
         """
         c = command[0]
-        if robot.state.teleop:
+        if robot.state.teleop or (display_name(robot.behavior) == "Climb" and c in "wasdqe"):
             robot.state.teleop_key = c
             return
         t = f'{time.perf_counter() - self.log[0, 0]:.3f}: '
@@ -233,13 +233,14 @@ class Terminal:
             self.quit = True
         elif c == " ":
             robot.set_behavior(None)
+            robot.set_controller(control_off)
             print(t + "Idle")
         elif c == "u":
             robot.set_behavior(stand)
             print(t + "Stand")
         elif c == "s":
             robot.set_behavior(stick)
-            print(t + "Sprawl")
+            print(t + "Stick")
         elif c == "w":
             robot.set_behavior(walk)
             print(t + "Walk")
@@ -267,14 +268,20 @@ class Terminal:
         elif c == "y":
             print("Reset log")
             self.log = np.zeros((self.log.shape[0], 0))
+        # elif c in "1234":
+        #     i = int(c)
+        #     if robot.state.weights[i - 1] > 0:
+        #         print(f"Unload {i}")
+        #         robot.set_behavior(unload, leg=i, reload=False)
+        #     else:
+        #         print(f"Reload {i}")
+        #         robot.set_behavior(unload, leg=i, reload=True)
         elif c in "1234":
             i = int(c)
-            if robot.state.weights[i - 1] > 0:
-                print(f"Unload {i}")
-                robot.set_behavior(unload, leg=i, reload=False)
-            else:
-                print(f"Reload {i}")
-                robot.set_behavior(unload, leg=i, reload=True)
+            print(t + "Retry step " + c)
+            steps = [1, 3, 0, 2]
+            robot.state.step = steps[i - 1]
+            robot.set_behavior(climb)
         elif c == "r":
             print(t + "Retry step")
             robot.state.step -= 1

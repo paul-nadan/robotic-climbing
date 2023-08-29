@@ -13,7 +13,7 @@ k.kp = .01;         % Controller gain (m/N)
 k.vmax = 1;         % Maximum controller velocity output (m/s)
 k.x0 = 0.15;        % Leg length in sprawl posture
 
-k.pfnoise = 0e-1;      % Process noise - force (N)
+k.pfnoise = 0e-1;   % Process noise - force (N)
 k.mfnoise = 0;      % Measurement noise - force (N)
 k.mrnoise = 0e-3;   % Measurement noise - position (m)
 

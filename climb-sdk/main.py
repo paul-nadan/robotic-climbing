@@ -15,7 +15,7 @@ import os
 def main_loop(terminal, buffer):
     interface = Terminal(terminal, buffer)
     if os.name == 'nt':
-        port = "COM6"           # Windows
+        port = "COM4"           # Windows
     else:
         port = "/dev/ttyUSB0"   # Linux
     robot = Robot(Motors(port=port, baud=1000000))

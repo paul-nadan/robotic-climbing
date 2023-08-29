@@ -49,7 +49,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 addpath('terrain-generation', 'config-generation', 'robot-kinematics', ...
-    'optimization', 'visualization');
+    'optimization', 'visualization', 'design-optimization');
 global FRAMES ANIMATE RECORD PLOT
 FRAMES; % stores animation frames for saving video file
 close all;
@@ -84,7 +84,7 @@ STEPS = 20; % number of robot steps to simulate per trial
 TIME_STEP = 0.25; % delay between frame updates for animation
 ABORT_STRIKES = 0; % aborts remaining samples after this number of failures
 IGNORE_FAILS = 0; % do not record any data from a failed trial
-REUSE_DATA = 1; % reuse previous simulation data in the workspace
+REUSE_DATA = 0; % reuse previous simulation data in the workspace
 PLOT_ONLY = 0; % do not run the simulation
 OPTIMIZE = ~~0; % Perform an optimization instead of a parameter sweep
 ITERS = 50; % Maximum iterations for performing parameter optimization
