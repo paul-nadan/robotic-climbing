@@ -121,9 +121,12 @@ class Terminal:
         """
         date = "{date:%Y-%m-%d-%H-%M-%S}".format(date=datetime.datetime.now())
         name = f'log/Force_Data_{date}.csv'
-        np.savetxt(name, self.log.T, delimiter=',', header="t, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, "
-                                                           + "xt, yt, zt, gx1, gy1, gz1, gx2, gy2, gz2, gx3, "
-                                                           + "gy3, gz3, gx4, gy4, gz4, gxt, gyt, gzt", comments="")
+        try:
+            np.savetxt(name, self.log.T, delimiter=',', header="t, x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4, "
+                                                               + "xt, yt, zt, gx1, gy1, gz1, gx2, gy2, gz2, gx3, "
+                                                               + "gy3, gz3, gx4, gy4, gz4, gxt, gyt, gzt", comments="")
+        except FileNotFoundError:
+            print(f"Could not save file as {name}")
 
     def teleop(self, robot, dt):
         """
@@ -182,7 +185,7 @@ class Terminal:
         :param robot: Robot to command
         """
         c = command[0]
-        if robot.state.teleop or (display_name(robot.behavior) == "Climb" and c in "wasdqe"):
+        if robot.state.teleop or (display_name(robot.behavior) == "Climb" and c in "wasdqeQEAD"):
             robot.state.teleop_key = c
             return
         t = f'{time.perf_counter() - self.log[0, 0]:.3f}: '
@@ -233,13 +236,13 @@ class Terminal:
             self.quit = True
         elif c == " ":
             robot.set_behavior(None)
-            robot.set_controller(control_off)
             print(t + "Idle")
         elif c == "u":
             robot.set_behavior(stand)
             print(t + "Stand")
         elif c == "s":
             robot.set_behavior(stick)
+            robot.set_controller(control_off)
             print(t + "Stick")
         elif c == "w":
             robot.set_behavior(walk)

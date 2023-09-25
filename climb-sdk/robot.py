@@ -14,7 +14,7 @@ KNEE_LIMIT_MAX = 60
 BODY_LIMIT_MIN = -60
 BODY_LIMIT_MAX = 60
 TAIL_LIMIT_MIN = -80
-TAIL_LIMIT_MAX = 80
+TAIL_LIMIT_MAX = 0
 
 # Robot geometry (mm)
 WIDTH = 154  # Body width
@@ -39,8 +39,8 @@ KI = 0      # Integral term (N/mm-s)
 KD = 0      # Derivative term (N-s/mm)
 KR = 1000   # Relative feedback strength for angular error
 KO = 0.1    # Angle overshoot to generate torque
-KF = 5     # Inward grasping force (N)
-KX = 1*0      # Position kP term for admittance control
+KF = 5      # Inward grasping force (N)
+KX = 1*0    # Position kP term for admittance control
 KM = 30     # Expected robot weight (N)
 
 
@@ -48,27 +48,30 @@ class Robot:
     def __init__(self, motors, controller=None):
         yaw = motors.add([1, 2, 3, 4], 'XM430-W350-T', lower=YAW_LIMIT_MIN, upper=YAW_LIMIT_MAX)
         shoulder = motors.add([5, 6, 7, 8], 'AX18-A', lower=SHOULDER_LIMIT_MIN, upper=SHOULDER_LIMIT_MAX, mirror=(6, 7))
-        knee = motors.add([9, 10, 11, 12], 'AX18-A', lower=KNEE_LIMIT_MIN, upper=KNEE_LIMIT_MAX, mirror=(10, 11),
-                          offset={9: LINK3_OFFSET, 10: -90 + LINK3_OFFSET, 11: LINK3_OFFSET, 12: LINK3_OFFSET})
+        knee = motors.add([9, 10, 11, 12], 'XM430-W350-T', lower=KNEE_LIMIT_MIN, upper=KNEE_LIMIT_MAX,
+                          offset={9: LINK3_OFFSET, 10: LINK3_OFFSET, 11: LINK3_OFFSET, 12: LINK3_OFFSET})
         body = motors.add(13, 'XM430-W350-T', lower=BODY_LIMIT_MIN, upper=BODY_LIMIT_MAX)
-        tail = motors.add(14, 'AX18-A', lower=TAIL_LIMIT_MIN, upper=TAIL_LIMIT_MAX, mirror=(14,), offset=-90)
+        tail = motors.add(14, 'AX18-A', lower=TAIL_LIMIT_MIN, upper=TAIL_LIMIT_MAX, offset=90, mirror=(14,))
         self.motors = motors
         self.behavior = None
         state = SimpleNamespace()
-        state.step = 0
-        state.substep = 0
-        state.t = 0
-        state.teleop = False
-        state.teleop_key = None
-        state.preload = False
-        state.f_goal = ()
-        state.f_override = {}
-        state.controller_display = ""
-        state.behavior_display = ""
-        state.weights = [1, 1, 1, 1, 1]
-        state.gripper_angles = [0, 0, 0, 0]
-        state.gripper_offsets = (0, 0, 0, 0)  # 0 = forward, 90 = outward
-        # state.gripper_offsets = (90, 90, 90, 90)  # 0 = forward, 90 = outward
+        state.step = 0                          # Current step of the gait
+        state.substep = 0                       # Current substep of the state machine
+        state.t = 0                             # Time elapsed in current substep (seconds)
+        state.t_total = 0                       # Time elapsed since run start (seconds)
+        state.teleop = False                    # Teleop mode - allow user input
+        state.teleop_key = None                 # Teleop command (character)
+        state.preload = False                   # Disable inward grasping (TODO: flip this)
+        state.f_goal = ()                       # Current force setpoints
+        state.f_override = {}                   # Fixed force values for force optimization
+        state.controller_display = ""           # Display name of current controller
+        state.behavior_display = ""             # Display name of current behavior
+        state.engagement = [1, 1, 1, 1]         # Estimates whether each gripper is engaged
+        state.weights = [1, 1, 1, 1, 1]         # Controller weights for load allocation
+        state.gripper_offsets = (45, 45, 45, 45)            # Offset of gripper default angle (0 = inward, 90 = forward)
+        # state.gripper_offsets = (60, 60, 60, 60)            # Offset of gripper default angle (0 = inward, 90 = forward)
+        # state.gripper_offsets = (90, 90, 90, 90)            # Offset of gripper default angle (0 = inward, 90 = forward)
+        state.gripper_angles = list(state.gripper_offsets)  # Estimates of each gripper angle relative to body
         state.kp, state.ki, state.kd, state.ko, state.kx, state.kf, state.kr, state.km = KP, KI, KD, KO, KX, KF, KR, KM
         self.state = state
         self.controller = controller
@@ -692,7 +695,7 @@ class TailJoint:
         :param goal: Return desired value instead of current value
         :return: Tail joint torque in Nmm
         """
-        offset = 0*1.5 * TAIL
+        offset = 280  # Nmm = TAIL * 0.8 No
         if fz is None:
             return self.motor.goal_torque if goal else self.motor.torque - offset
         if fy is None:

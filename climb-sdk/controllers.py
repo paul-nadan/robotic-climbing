@@ -14,7 +14,6 @@ def control_off(robot, *_args, **_kwargs):
         motor.set_velocity = motor.goal_velocity
         motor.set_torque = motor.goal_torque
 
-
 def admittance_demo(robot, dt=0, init=False):
     """
     Demo controller for force on 1 foot in z-direction (set kp = ~5)
@@ -52,6 +51,8 @@ def admittance(robot, dt=0, init=False):
         state.prev_wrench = np.zeros((6,))                          # Reset previous error value
         state.integral_wrench = np.zeros((6,))                      # Reset error integral value
         return
+    state.t_total += dt
+    verbose = int(5 * (state.t_total - dt)) != int(5 * state.t_total)
 
     x = get_position_vector(robot, goal=False)                      # Current state vector
     x0 = get_position_vector(robot, goal=True)                      # Nominal state vector
@@ -59,18 +60,22 @@ def admittance(robot, dt=0, init=False):
                         (state.weights[4],)))                       # Foot weight vector (13 x 1)
     G = (get_grasp_map(robot) * w)                                  # Weighted grasp map (6 x 13)
     f = get_force_vector(robot, goal=False)                         # Vector of forces applied by feet (13 x 1), 1 ms
-    print(w)
-    print(f)
+    # if verbose:
+        # print('-------------------------')
+        # print(f'Actual tail torque: {robot.tail.motor.torque/1000}')
+        # print(f'Current forces:\n{np.reshape(f[:-1], (4, 3)).T}, {f[-1]}')
     wrench = G @ f                                                  # Net wrench on body (6 x 1)
     G = G[:, :-1]                                                   # Remove tail for computing body displacement
     A = ((np.eye(13) * w)[:-1, :-1] - G.T @ np.linalg.pinv(G.T))    # Transformation to internal motion space (13 x 13)
 
-    # Compute optimal force
+    # Compute optimal forces (3 x 5)
     if not state.preload:
-        f_goal = hang_qp(robot, wrench, state.f_override)           # Optimal forces (3 x 5)
+        angles = [90 - a for a in state.gripper_angles]
+        f_goal = hang_qp(robot, wrench, state.f_override, gripper_angle=angles, verbose=verbose)
         state.f_goal = f_goal
     else:
-        f_goal = hang_simple(robot, wrench)                         # Optimal forces (3 x 5)
+        # f_goal = hang_simple(robot, wrench)
+        f_goal = hang_qp(robot, wrench, state.f_override, verbose=verbose)
         state.f_goal = f_goal
 
     # Compute feedback
@@ -182,7 +187,7 @@ def hang_simple(robot, wrench, min_force=2):
     return forces
 
 
-def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=15, peel_angle=20, lateral_angle=30):
+def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=25, peel_angle=20, lateral_angle=30, gripper_angle=90, verbose=False):
     """
         Solve quadratic program to determine the optimal contact forces
 
@@ -193,12 +198,13 @@ def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=15, peel_angle=20, 
         :param max_force: Maximum gripper force in Newtons
         :param peel_angle: Maximum angle of applied normal force in degrees
         :param lateral_angle: Maximum angle of applied lateral force in degrees
+        :param gripper_angle: Angle of gripper relative to robot body in degrees
         :return: 3x5 matrix of desired foot and tail forces
         """
     # wrench = np.array((0, 20, 0, -1000, 0, 0))
-    print(wrench)
-    print(f_goal)
     N = np.array(((0, 0, 0, 0), (0, 0, 0, 0), (1, 1, 1, 1)))
+    if not hasattr(gripper_angle, "__len__"):
+        gripper_angle = [gripper_angle, gripper_angle, gripper_angle, gripper_angle]
 
     # Cost
     H = np.eye(14) * 0.01
@@ -217,7 +223,7 @@ def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=15, peel_angle=20, 
     for i, leg in enumerate(robot.get_legs()):
         ind3 = slice(i * 3, i * 3 + 3)
         w = 0 if i+1 in f_goal else robot.state.weights[i]
-        rot[i] = get_transform(N[:, i], 0 * (-1 if leg.mirror else 1))
+        rot[i] = get_transform(N[:, i], gripper_angle[i] * (-1 if leg.mirror else 1))
         r_hat[i] = skew(*leg.get_pos(goal=False))
 
         # Force/torque balance
@@ -249,15 +255,18 @@ def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=15, peel_angle=20, 
 
     forces = np.zeros((3, 5))
     if x is None:
-        print("Fail")
+        print("Failed to find force solution")
         return 0*hang_simple(robot, wrench)
     for i in range(4):
         ind3 = slice(i * 3, i * 3 + 3)
         forces[:, i] = rot[i] @ x[ind3]
     forces[:, -1] = (0, 0, x[-2])
     margin = -x[-1]/tand(peel_angle)
-    print(forces)
-    print(margin)
+    # if verbose:
+    #     print(f'External wrench:\n{wrench}')
+    #     print(f'Fixed forces: {f_goal}')
+    #     print(f'Optimal solution:\n{forces}')
+    # print(f'Safety margin: {margin:.2f}, Engagement: {robot.state.engagement}')
     return forces
 
 
@@ -316,4 +325,4 @@ if __name__ == "__main__":
 
     wrench_ = [  -3.39,   12.64,   0,  -655.62, -356.31,  0]
     force_ = {2: (0, 0, 0), 3: (0, 0, 0)}
-    hang_qp(robot_, wrench_, force_, min_force=0)
+    hang_qp(robot_, wrench_, force_, min_force=0, gripper_angle=45, verbose=True)

@@ -1,8 +1,8 @@
-% %% 
-% solveQP = @solveLP;
-% solveQP_old = @solveLP1;
-% 
-% %% 
+%% 
+solveQP = @solveLP;
+solveQP_old = @solveLP1;
+
+% %% Timing code
 % n = 100000;
 % a = zeros(3, n);
 % tic()
@@ -254,9 +254,9 @@ function [F, margin, ratio] = solveLP(r, yaw, wrench, stance, phi, theta, fmin, 
     b = zeros(12, 1);
     lb = zeros(14, 1)-inf;
     ub = zeros(14, 1)+inf;
-    if mode < 1 || mode > 6
-        stance = [1 1 1 1];
-    end
+%     if mode < 1 || mode > 6
+%         stance = [1 1 1 1];
+%     end
     for i = 1:4
         % Force/torque balance
         R = [cosd(yaw(i)) -sind(yaw(i)) 0;
@@ -284,47 +284,47 @@ function [F, margin, ratio] = solveLP(r, yaw, wrench, stance, phi, theta, fmin, 
     ub(end-1) = fmax;
     H = ones(size(H))*1e-3;
     
-    id = 1:3;
-    if mode == 1
-        lb(id) = [0;0;0];
-        ub(id) = lb(id);
-    elseif mode == 2
-        lb(id) = [0;-4;0];
-        ub(id) = lb(id);
-    elseif mode == 3
-        lb(id) = [0;0;0];
-        ub(id) = lb(id);
-    elseif mode == 4
-        lb(id) = [0;0;4];
-        ub(id) = lb(id);
-    elseif mode == 5
-        lb(id) = [0;4;4];
-        ub(id) = lb(id);
-    elseif mode == 6
-        lb(id) = [0;wrench(2)/4;0];
-        ub(id) = lb(id);
-    end
-    
-    id = 10:12;
-    if mode == 1
-        lb(id) = [0;0;0];
-        ub(id) = lb(id);
-    elseif mode == 2
-        lb(id) = [0;-4;0];
-        ub(id) = lb(id);
-    elseif mode == 3
-        lb(id) = [0;0;0];
-        ub(id) = lb(id);
-    elseif mode == 4
-        lb(id) = [0;0;4];
-        ub(id) = lb(id);
-    elseif mode == 5
-        lb(id) = [0;4;4];
-        ub(id) = lb(id);
-    elseif mode == 6
-        lb(id) = [0;wrench(2)/4;0];
-        ub(id) = lb(id);
-    end
+%     id = 1:3;
+%     if mode == 1
+%         lb(id) = [0;0;0];
+%         ub(id) = lb(id);
+%     elseif mode == 2
+%         lb(id) = [0;-4;0];
+%         ub(id) = lb(id);
+%     elseif mode == 3
+%         lb(id) = [0;0;0];
+%         ub(id) = lb(id);
+%     elseif mode == 4
+%         lb(id) = [0;0;4];
+%         ub(id) = lb(id);
+%     elseif mode == 5
+%         lb(id) = [0;4;4];
+%         ub(id) = lb(id);
+%     elseif mode == 6
+%         lb(id) = [0;wrench(2)/4;0];
+%         ub(id) = lb(id);
+%     end
+%     
+%     id = 10:12;
+%     if mode == 1
+%         lb(id) = [0;0;0];
+%         ub(id) = lb(id);
+%     elseif mode == 2
+%         lb(id) = [0;-4;0];
+%         ub(id) = lb(id);
+%     elseif mode == 3
+%         lb(id) = [0;0;0];
+%         ub(id) = lb(id);
+%     elseif mode == 4
+%         lb(id) = [0;0;4];
+%         ub(id) = lb(id);
+%     elseif mode == 5
+%         lb(id) = [0;4;4];
+%         ub(id) = lb(id);
+%     elseif mode == 6
+%         lb(id) = [0;wrench(2)/4;0];
+%         ub(id) = lb(id);
+%     end
     
     
     options = optimoptions('quadprog', 'Display', 'off');

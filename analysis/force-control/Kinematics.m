@@ -15,78 +15,13 @@ clear all;
 % 
 % return
 
-syms LINK1 LINK2A LINK2B LINK3 a1 a2 a3 vx vy vz fx fy fz t1 t2 t3 w1 w2 w3
-
-LINK1 = 23.5;
-LINK2A = 111;
-LINK2B = 22.5;
-LINK3 = 98.7;
-
-L1r = LINK1;
-L2r = LINK2A*cos(a2) - LINK2B*sin(a2);
-L3r = -LINK3*sin(a2 + a3);
-
-L1z = 0;
-L2z = -LINK2A*sin(a2) - LINK2B*cos(a2);
-L3z = -LINK3*cos(a2 + a3);
-
-r = L1r + L2r + L3r;
-z = L1z + L2z + L3z;
-x = r*cos(a1);
-y = r*sin(a1);
-
-J = jacobian([x,y,z], [a1,a2,a3])
-Jinv = simplify(inv(J))
-
-W = simplify(Jinv*[vx;vy;vz])
-T = simplify(J.'*[fx;fy;fz])
-F = simplify(Jinv.'*[t1;t2;t3])
-V = simplify(J*[w1;w2;w3])
-
-X = [x;y;z]
-
-syms r1 z1
-% solve([r;z] == [r1;z1], [a2, a3])
-
-
-function V = getSkew(v)
-    V = [0,    -v(3),  v(2);
-         v(3),  0,    -v(1);
-        -v(2),  v(1),  0];
-end
+% syms LINK1 LINK2A LINK2B LINK3 a1 a2 a3 vx vy vz fx fy fz t1 t2 t3 w1 w2 w3
 % 
-% clear
-% syms LINK1 LINK2A LINK2B LINK3 TAIL WIDTH LENGTH HEIGHT...
-%      a1 a2 a3 ab at x1 x2 x3...
-%      vx vy vz w1 w2 w3 fx fy fz t1 t2 t3 real
+% LINK1 = 23.5;
+% LINK2A = 111;
+% LINK2B = 22.5;
+% LINK3 = 98.7;
 % 
-% % Morphology
-% robot.rotate = [1, 1, -1, -1, -1]/2;                    % Apply body joint
-% robot.corners = [-1 1 -1 1 1; 1 1 -1 -1 1; 1 1 1 1 1]; % Reverse X0
-% robot.mirror = [-1 1 -1 1 1; 1 1 1 1 1; 1 1 1 1 1];    % Reverse X123
-% 
-% % robot.rotate = [1, 1, 0, 0, -1, -1, -1]/2;                 % Hexapod!
-% % robot.corners = [-1 1 -1 1 -1 1 1; 1 1 0 0 -1 -1 1; 1 1 1 1 1 1 1];
-% % robot.mirror = [-1 1 -1 1 -1 1 1; 1 1 1 1 1 1 1; 1 1 1 1 1 1 1];
-% 
-% robot.tail = 1;                                         % Tail present
-% robot.n = length(robot.rotate);                         % Number of limbs
-% 
-% % Geometry (comment out for symbolic math)
-% LINK1 = 23.5e-3;        % Shoulder link length
-% LINK2A = 111e-3;        % Upper leg link length
-% LINK2B = 22.5e-3;       % Upper leg link vertical offset
-% LINK3 = 90.3e-3;        % Lower leg link length
-% WIDTH = 154e-3;         % Body width
-% LENGTH = 283.4e-3;      % Body length
-% HEIGHT = 54e-3;         % Body height
-% TAIL = 350e-3;          % Tail length
-% robot.h = HEIGHT;
-% 
-% % Body joint kinematics
-% R = [1, 0, 0; 0, cos(ab), -sin(ab); 0, sin(ab), cos(ab)];   % Pitch joint
-% 
-% % Limb kinematics
 % L1r = LINK1;
 % L2r = LINK2A*cos(a2) - LINK2B*sin(a2);
 % L3r = -LINK3*sin(a2 + a3);
@@ -95,133 +30,198 @@ end
 % L2z = -LINK2A*sin(a2) - LINK2B*cos(a2);
 % L3z = -LINK3*cos(a2 + a3);
 % 
-% % Joint positions
-% X0 = R*[WIDTH/2; LENGTH/2; 0];
-% X1 = R*[L1r*cos(a1); L1r*sin(a1); L1z];
-% X2 = R*[L2r*cos(a1); L2r*sin(a1); L2z];
-% X3 = R*[L3r*cos(a1); L3r*sin(a1); L3z];
-% X = X0 + X1 + X2 + X3;
+% r = L1r + L2r + L3r;
+% z = L1z + L2z + L3z;
+% x = r*cos(a1);
+% y = r*sin(a1);
 % 
-% X0r = R'*[WIDTH/2; -LENGTH/2; 0];
-% X1r = R'*[L1r*cos(a1); L1r*sin(a1); L1z];
-% X2r = R'*[L2r*cos(a1); L2r*sin(a1); L2z];
-% X3r = R'*[L3r*cos(a1); L3r*sin(a1); L3z];
-% Xr = X0r + X1r + X2r + X3r;
+% J = jacobian([x,y,z], [a1,a2,a3])
+% Jinv = simplify(inv(J))
 % 
-% Xt0 = R'*[0; -LENGTH/2; 0];
-% Xt1 = R'*[0; -cos(at)*TAIL; sin(at)*TAIL];
-% Xt = Xt0 + Xt1;
+% W = simplify(Jinv*[vx;vy;vz])
+% T = simplify(J.'*[fx;fy;fz])
+% F = simplify(Jinv.'*[t1;t2;t3])
+% V = simplify(J*[w1;w2;w3])
 % 
-% % Jacobians
-% J = jacobian(X, [a1, a2, a3, ab]);
-% Jr = jacobian(Xr, [a1, a2, a3, ab]);
-% Jt = jacobian(Xt, [ab, at]);
+% X = [x;y;z]
 % 
-% % Grasp Map
-% G = [eye(3); skew([x1, x2, x3])];
+% syms r1 z1
+% % solve([r;z] == [r1;z1], [a2, a3])
 % 
-% % Individual limb functions
-% robot.getR = matlabFunction(R, 'vars', ab);
-% robot.getJ = matlabFunction(J, 'vars', {[a1; a2; a3], ab});
-% robot.getJr = matlabFunction(Jr, 'vars', {[a1; a2; a3], ab});
-% robot.getX0 = matlabFunction(X0, 'vars', {[a1; a2; a3], ab});
-% robot.getX1 = matlabFunction(X1, 'vars', {[a1; a2; a3], ab});
-% robot.getX2 = matlabFunction(X2, 'vars', {[a1; a2; a3], ab});
-% robot.getX3 = matlabFunction(X3, 'vars', {[a1; a2; a3], ab});
 % 
-% robot.getJt = matlabFunction(Jt, 'vars', {at, ab});
-% robot.getXt0 = matlabFunction(Xt0, 'vars', {at, ab});
-% robot.getXt1 = matlabFunction(Xt1, 'vars', {at, ab});
-% 
-% robot.getG = matlabFunction(G, 'vars', {[x1; x2; x3]});
-% 
-% % Full robot functions
-% robot.getJoints = @(a)getJoints(a, robot);
-% robot.getJacobian = @(a)getJacobian(a, robot);
-% robot.getGraspMap = @(a)getGraspMap(a, robot);
-% 
-% QuasiStaticSim
-% 
-% function [X, corner, shoulder, knee, foot, base, tail] = getJoints(a, robot)
-%     a = deg2rad(a);
-%     nlegs = robot.n - robot.tail;
-%     corner = zeros(3, nlegs);
-%     shoulder = zeros(3, nlegs);
-%     knee = zeros(3, nlegs);
-%     foot = zeros(3, nlegs);
-%     ab = a(2, end);
-%     for i = 1:nlegs
-%         ab_corner = ab*robot.rotate(i)*robot.corners(2, i);
-%         ab_mirror = ab*robot.rotate(i)*robot.mirror(2, i);
-%         corner(:, i) = robot.corners(:, i).*robot.getX0(a(:, i), ab_corner);
-%         shoulder(:, i) = corner(:, i) + robot.mirror(:, i).*robot.getX1(a(:, i), ab_mirror);
-%         knee(:, i) = shoulder(:, i) + robot.mirror(:, i).*robot.getX2(a(:, i), ab_mirror);
-%         foot(:, i) = knee(:, i) + robot.mirror(:, i).*robot.getX3(a(:, i), ab_mirror);
-%     end
-%     
-%     if robot.tail
-%         ab_corner = -ab*robot.rotate(i)*robot.corners(2, end);
-%         ab_mirror = -ab*robot.rotate(i)*robot.mirror(2, end);
-%         at = a(3, end);
-%         base = robot.corners(:, end).*robot.getXt0(at, ab_corner);
-%         tail = base + robot.mirror(:, end).*robot.getXt1(at, ab_mirror);
-%     else
-%        base = zeros(3, 0);
-%        tail = zeros(3, 0);
-%     end
-%     X = [foot, tail];
-% end
-% 
-% function J = getJacobian(a, robot)
-%     a = deg2rad(a);
-%     J = zeros(robot.n*3, robot.n*3 - 1);
-%     nlegs = robot.n - robot.tail;
-%     ab = a(2, end);
-%     for i = 1:nlegs
-% %         R = robot.getR(ab * robot.rotate(i));
-% %         Ji = robot.getJ(a(:, i), 0);
-% %         J(i*3-2:i*3, i*3-2:i*3) = robot.mirror(:, i).*R*Ji(:, 1:3);
-% %         J(i*3-2:i*3, end-1) = R*robot.corners(:, i).*Ji(:, end)*robot.rotate(i);
-%         
-% %         if robot.rotate(i) > 0
-% %             J(i*3-2:i*3, [i*3-2:i*3, end-1]) = robot.mirror(:, i).*robot.getJ(a(:, i), ab/2);
-% %             J(i*3-2:i*3, end-1) = J(i*3-2:i*3, end-1)/2;
-% %         elseif robot.rotate(i) < 0
-% %             J(i*3-2:i*3, [i*3-2:i*3, end-1]) = robot.mirror(:, i).*robot.getJr(a(:, i), ab/2);
-% %             J(i*3-2:i*3, end-1) = J(i*3-2:i*3, end-1)/2;
-% %         else
-%             J(i*3-2:i*3, [i*3-2:i*3, end-1]) = robot.mirror(:, i).*robot.getJ(a(:, i), 0);
-%             J(i*3-2:i*3, end-1) = J(i*3-2:i*3, end-1)*0;
-% %         end
-%     end
-%     if robot.tail
-%         at = a(3, end);
-%         
-% %         R = robot.getR(ab * robot.rotate(end));
-% %         J(end-2:end, end-1:end) = robot.mirror(:, end).*R*robot.getJt(at, 0);
-% %         J(end-2:end, end-1) = J(end-2:end, end-1)*robot.rotate(end);
-% %         J(end-2:end, end-1:end) = robot.getJt(at, ab/2);
-%         
-%         J(end-2:end, end-1:end) = [1;1;-1].*robot.getJt(at, 0);
-% 
-%         
-%         J(end-2:end, end-1) = J(end-2:end, end-1)/2*0;
-%     end
-%     J = deg2rad(J);
-% end
-% 
-% function G = getGraspMap(x, robot)
-%     G = zeros(6, size(x, 2)*3);
-%     for i = 1:size(x, 2)
-%         G(:, i*3-2:i*3) = robot.getG(x(:, i));
-%     end
-% end
-% 
-% function V = skew(v)
+% function V = getSkew(v)
 %     V = [0,    -v(3),  v(2);
 %          v(3),  0,    -v(1);
 %         -v(2),  v(1),  0];
 % end
+% 
+clear
+syms LINK1 LINK2A LINK2B LINK3 TAIL WIDTH LENGTH HEIGHT...
+     a1 a2 a3 ab at x1 x2 x3...
+     vx vy vz w1 w2 w3 fx fy fz t1 t2 t3 real
+
+% Morphology
+robot.rotate = [1, 1, -1, -1, -1]/2;                    % Apply body joint
+robot.corners = [-1 1 -1 1 1; 1 1 -1 -1 1; 1 1 1 1 1]; % Reverse X0
+robot.mirror = [-1 1 -1 1 1; 1 1 1 1 1; 1 1 1 1 1];    % Reverse X123
+
+% robot.rotate = [1, 1, 0, 0, -1, -1, -1]/2;                 % Hexapod!
+% robot.corners = [-1 1 -1 1 -1 1 1; 1 1 0 0 -1 -1 1; 1 1 1 1 1 1 1];
+% robot.mirror = [-1 1 -1 1 -1 1 1; 1 1 1 1 1 1 1; 1 1 1 1 1 1 1];
+
+robot.tail = 1;                                         % Tail present
+robot.n = length(robot.rotate);                         % Number of limbs
+
+% Geometry (comment out for symbolic math)
+LINK1 = 23.5e-3;        % Shoulder link length
+LINK2A = 111e-3;        % Upper leg link length
+LINK2B = 22.5e-3;       % Upper leg link vertical offset
+LINK3 = 90.3e-3;        % Lower leg link length
+WIDTH = 154e-3;         % Body width
+LENGTH = 283.4e-3;      % Body length
+HEIGHT = 54e-3;         % Body height
+TAIL = 350e-3;          % Tail length
+robot.h = HEIGHT;
+
+% Body joint kinematics
+R = [1, 0, 0; 0, cos(ab), -sin(ab); 0, sin(ab), cos(ab)];   % Pitch joint
+
+% Limb kinematics
+L1r = LINK1;
+L2r = LINK2A*cos(a2) - LINK2B*sin(a2);
+L3r = -LINK3*sin(a2 + a3);
+
+L1z = 0;
+L2z = -LINK2A*sin(a2) - LINK2B*cos(a2);
+L3z = -LINK3*cos(a2 + a3);
+
+% Joint positions
+X0 = R*[WIDTH/2; LENGTH/2; 0];
+X1 = R*[L1r*cos(a1); L1r*sin(a1); L1z];
+X2 = R*[L2r*cos(a1); L2r*sin(a1); L2z];
+X3 = R*[L3r*cos(a1); L3r*sin(a1); L3z];
+X = X0 + X1 + X2 + X3;
+
+X0r = R'*[WIDTH/2; -LENGTH/2; 0];
+X1r = R'*[L1r*cos(a1); L1r*sin(a1); L1z];
+X2r = R'*[L2r*cos(a1); L2r*sin(a1); L2z];
+X3r = R'*[L3r*cos(a1); L3r*sin(a1); L3z];
+Xr = X0r + X1r + X2r + X3r;
+
+Xt0 = R'*[0; -LENGTH/2; 0];
+Xt1 = R'*[0; -cos(at)*TAIL; sin(at)*TAIL];
+Xt = Xt0 + Xt1;
+
+% Jacobians
+J = jacobian(X, [a1, a2, a3, ab]);
+Jr = jacobian(Xr, [a1, a2, a3, ab]);
+Jt = jacobian(Xt, [ab, at]);
+
+% Grasp Map
+G = [eye(3); skew([x1, x2, x3])];
+
+% Individual limb functions
+robot.getR = matlabFunction(R, 'vars', ab);
+robot.getJ = matlabFunction(J, 'vars', {[a1; a2; a3], ab});
+robot.getJr = matlabFunction(Jr, 'vars', {[a1; a2; a3], ab});
+robot.getX0 = matlabFunction(X0, 'vars', {[a1; a2; a3], ab});
+robot.getX1 = matlabFunction(X1, 'vars', {[a1; a2; a3], ab});
+robot.getX2 = matlabFunction(X2, 'vars', {[a1; a2; a3], ab});
+robot.getX3 = matlabFunction(X3, 'vars', {[a1; a2; a3], ab});
+
+robot.getJt = matlabFunction(Jt, 'vars', {at, ab});
+robot.getXt0 = matlabFunction(Xt0, 'vars', {at, ab});
+robot.getXt1 = matlabFunction(Xt1, 'vars', {at, ab});
+
+robot.getG = matlabFunction(G, 'vars', {[x1; x2; x3]});
+
+% Full robot functions
+robot.getJoints = @(a)getJoints(a, robot);
+robot.getJacobian = @(a)getJacobian(a, robot);
+robot.getGraspMap = @(a)getGraspMap(a, robot);
+
+QuasiStaticSim
+
+function [X, corner, shoulder, knee, foot, base, tail] = getJoints(a, robot)
+    a = deg2rad(a);
+    nlegs = robot.n - robot.tail;
+    corner = zeros(3, nlegs);
+    shoulder = zeros(3, nlegs);
+    knee = zeros(3, nlegs);
+    foot = zeros(3, nlegs);
+    ab = a(2, end);
+    for i = 1:nlegs
+        ab_corner = ab*robot.rotate(i)*robot.corners(2, i);
+        ab_mirror = ab*robot.rotate(i)*robot.mirror(2, i);
+        corner(:, i) = robot.corners(:, i).*robot.getX0(a(:, i), ab_corner);
+        shoulder(:, i) = corner(:, i) + robot.mirror(:, i).*robot.getX1(a(:, i), ab_mirror);
+        knee(:, i) = shoulder(:, i) + robot.mirror(:, i).*robot.getX2(a(:, i), ab_mirror);
+        foot(:, i) = knee(:, i) + robot.mirror(:, i).*robot.getX3(a(:, i), ab_mirror);
+    end
+    
+    if robot.tail
+        ab_corner = -ab*robot.rotate(i)*robot.corners(2, end);
+        ab_mirror = -ab*robot.rotate(i)*robot.mirror(2, end);
+        at = a(3, end);
+        base = robot.corners(:, end).*robot.getXt0(at, ab_corner);
+        tail = base + robot.mirror(:, end).*robot.getXt1(at, ab_mirror);
+    else
+       base = zeros(3, 0);
+       tail = zeros(3, 0);
+    end
+    X = [foot, tail];
+end
+
+function J = getJacobian(a, robot)
+    a = deg2rad(a);
+    J = zeros(robot.n*3, robot.n*3 - 1);
+    nlegs = robot.n - robot.tail;
+    ab = a(2, end);
+    for i = 1:nlegs
+%         R = robot.getR(ab * robot.rotate(i));
+%         Ji = robot.getJ(a(:, i), 0);
+%         J(i*3-2:i*3, i*3-2:i*3) = robot.mirror(:, i).*R*Ji(:, 1:3);
+%         J(i*3-2:i*3, end-1) = R*robot.corners(:, i).*Ji(:, end)*robot.rotate(i);
+        
+%         if robot.rotate(i) > 0
+%             J(i*3-2:i*3, [i*3-2:i*3, end-1]) = robot.mirror(:, i).*robot.getJ(a(:, i), ab/2);
+%             J(i*3-2:i*3, end-1) = J(i*3-2:i*3, end-1)/2;
+%         elseif robot.rotate(i) < 0
+%             J(i*3-2:i*3, [i*3-2:i*3, end-1]) = robot.mirror(:, i).*robot.getJr(a(:, i), ab/2);
+%             J(i*3-2:i*3, end-1) = J(i*3-2:i*3, end-1)/2;
+%         else
+            J(i*3-2:i*3, [i*3-2:i*3, end-1]) = robot.mirror(:, i).*robot.getJ(a(:, i), 0);
+            J(i*3-2:i*3, end-1) = J(i*3-2:i*3, end-1)*0;
+%         end
+    end
+    if robot.tail
+        at = a(3, end);
+        
+%         R = robot.getR(ab * robot.rotate(end));
+%         J(end-2:end, end-1:end) = robot.mirror(:, end).*R*robot.getJt(at, 0);
+%         J(end-2:end, end-1) = J(end-2:end, end-1)*robot.rotate(end);
+%         J(end-2:end, end-1:end) = robot.getJt(at, ab/2);
+        
+        J(end-2:end, end-1:end) = [1;1;-1].*robot.getJt(at, 0);
+
+        
+        J(end-2:end, end-1) = J(end-2:end, end-1)/2*0;
+    end
+    J = deg2rad(J);
+end
+
+function G = getGraspMap(x, robot)
+    G = zeros(6, size(x, 2)*3);
+    for i = 1:size(x, 2)
+        G(:, i*3-2:i*3) = robot.getG(x(:, i));
+    end
+end
+
+function V = skew(v)
+    V = [0,    -v(3),  v(2);
+         v(3),  0,    -v(1);
+        -v(2),  v(1),  0];
+end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Jinv = simplify(inv(J));

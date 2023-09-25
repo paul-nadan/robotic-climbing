@@ -1,11 +1,15 @@
+%%% Run Kinematics.m first, then this script Change yaw (max lateral force
+%%% angle), mode (which feet are in contact), and offset (gripper inward
+%%% angle offset) to produce different plots
+
 close all;
 set(0,'defaultfigureposition',[400 100 450 750])
 % clearvars -except {get* body solveQP solveQP_old}
-theta = [ones(1, robot.n-robot.tail).*[0; -45; 30], [0; 0; -5]];    % Joint angles (deg)
+theta = [ones(1, robot.n-robot.tail).*[0; -30; 15], [0; 0; -5]];    % Joint angles (deg)
 x = [0; 0; 0.05];      % Centroid position (m)
 R = eye(3);         % Orientation (rotation matrix)
 g = 9.81;           % Gravity (m/s^2)
-m = 2;              % mass (kg)
+m = 3.2;              % mass (kg)
 bounds = [repmat([-70 70; -70 90; -60 60], robot.n-robot.tail, 1); -60 60; -80 80];
 
 
@@ -18,19 +22,29 @@ r0(1:3) = r0(1:3) + [0; .15; 0];
 
 % r0 = reshape(corner, [], 1);
 
-rng(3);
-theta(:, 1:4) = theta(:, 1:4) + 2*(rand(3, 4)-.5) * 45;
-theta = vec2theta(max(min(theta2vec(theta), bounds(:, 2)), bounds(:, 1)));
+% rng(3);
+% theta(:, 1:4) = theta(:, 1:4) + 2*(rand(3, 4)-.5) * 45;
+% theta = vec2theta(max(min(theta2vec(theta), bounds(:, 2)), bounds(:, 1)));
 % theta(1, 1:4) = theta(1, 1:4) + 45;
 feet = robot.getJoints(theta);
 
-mode = [1 1 1 1];
-offset = 0;
-yaw = 0;
+yaw = 30;             % Maximum lateral force angle
+mode = [1 1 1 1];     % Which feet are engaged
+offset = 45;          % Gripper inward angle offset
+h = HEIGHT/2;         % Offset CoM to top of robot body for visibility
 
-% [force, margin] = solveQP(feet, offset*[1; -1; 1; -1], ...
-%                 [0; m*g; 0; -m*g*h; 0; 0], mode, 20, yaw, 2, 20);
+[force, margin] = solveQP(feet, offset*[1; -1; 1; -1], ...
+                [0; m*g; 0; -m*g*h; 0; 0], mode, 20, yaw, 0, 25, 0);
 % torque = getTorques(feet, force);
+clf;
+drawrobot(x, R, theta, robot);
+
+
+drawforces([x + feet, x + [0; 0; h]], [force, [0; -m*g; 0]]);
+title(['Margin: ', num2str(margin, '%.1f'), ' N']);
+normalized_margin = margin * sum(mode) / (m*g)
+axis off
+return
 
 r = reshape(feet, [], 1);
 [X, Y] = meshgrid([-1, 1]*1, [-1, 1]*1);
@@ -80,15 +94,15 @@ end
 toc()
 dX = R*feet+x - X0
 
-clf;
+figure;
 drawrobot(x, R, theta, robot);
 
 
 
 % drawrobot(x, R, theta, getJoints, body(3));
-% drawforces([feet, x + [0; 0; h]], [force, [0; -m*g; 0]]);
-% title(['Margin: ', num2str(margin, '%.3f'), ' N']);
-% margin
+drawforces([feet, x + [0; 0; h]], [force, [0; -m*g; 0]]);
+title(['Margin: ', num2str(margin, '%.3f'), ' N']);
+margin
 
 %% Controls Functions
 
@@ -202,7 +216,7 @@ function drawrobot(x, R, a, robot)
           body1(:, [1 2 4 3]) - offset1, cbody);
     prism(body2(:, [1 2 4 3]) + offset2, ...
           body2(:, [1 2 4 3]) - offset2, cbody);
-%     cylinder(body1(:, 3), body1(:, 4), robot.h/2*sqrt(2), cleg);
+    cylinder(body1(:, 3), body1(:, 4), robot.h/2*sqrt(2), cleg);
     axis equal;
     for i = 1:size(foot, 2)
         cylinder(corner(:, i), shoulder(:, i), rleg, cleg);
@@ -224,7 +238,7 @@ end
 function drawforces(r, f)
     R = vrrotvec2mat([1, 0, 0, pi/2]);
     r = R*r;
-    f = R*f/40;
+    f = R*f/100;
     quiver3(r(1,:), r(2,:), r(3,:), ...
             f(1,:), f(2,:), f(3,:), ...
             0, 'b', 'linewidth', 5);

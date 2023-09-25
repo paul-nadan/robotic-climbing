@@ -33,7 +33,7 @@ def main_loop(terminal, buffer):
 
         dt = time.perf_counter() - t
         t += dt
-        if dt > 1:              # Timeout
+        if dt > 1:              # Timeouto
             continue
 
         interface.teleop(robot, dt)     # Check for operator input
@@ -67,9 +67,9 @@ def main_loop(terminal, buffer):
 
             # Temperature failsafe
             if temp > 70:   # AX limit is 75, XM limit is 80
-                robot.motors.disable()
                 for motor in robot.motors.get():
                     if motor.temperature > 70:
+                        robot.motors.disable(motor.id)
                         print(f"TEMPERATURE UNSAFE: motor {motor.id} at {motor.temperature}°C")
 
 

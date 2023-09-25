@@ -125,7 +125,7 @@ close all
 x = [2, 3, 5, 10];
 for n = x
 % n = 2;
-k = 1000;
+k = 100;
 % Theta = linspace(0, 90, 180+1);
 % Theta = Theta(2:end-1);
 Theta = 45;
@@ -168,34 +168,3 @@ title(['Gripper ' num2str(n) ': Maximum Load'])
 colorbar
 caxis([0,1])
 set(gca,'YDir','normal')
-
-figure(2);
-[~,I] = min(F, [], 2, 'omitnan');
-theta_opt = theta(I);
-theta_opt(I==1) = NaN;
-plot(phi, theta_opt);
-xlabel('Force Angle');
-ylabel('Optimal Splay Angle');
-title(['Gripper ' num2str(n)])
-ylim([0,90]);
-xlim([0,90]);
-
-figure(3);
-% Fopt = F(:,I);
-% for i = 1:length(phi)
-%     Fopt(i+1:end, i) = 0;
-% end
-% Fmax = max(Fopt, [], 1);
-% Fmax(I==1) = Inf;
-
-Fmax = F;
-
-plot(phi, Fmax, 'DisplayName', num2str(n));
-xlabel('Force Angle');
-ylabel('Minimum Carriage Load Ratio');
-legend
-hold on
-% title(['Gripper ' num2str(n)])
-title('Carriage Number');
-% ylim([0,1]);
-end
