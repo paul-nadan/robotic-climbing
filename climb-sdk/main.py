@@ -56,6 +56,8 @@ def main_loop(terminal, buffer):
             volt = min(m.voltage for m in robot.motors.get())
             interface.status[0] = f"--- {robot.motors.status} | " \
                                   f"{display_name(robot.controller)} | " \
+                                  f"{robot.motors.get(2).torque:.2f} Nmm / " \
+                                  f"{robot.motors.get(2).set_torque:.2f} Nmm | " \
                                   f"{display_name(robot.behavior)} | " \
                                   f"{(t - t0) / loops * 1000:.2f} ms | " \
                                   f"{temp}°C | " \
@@ -64,6 +66,7 @@ def main_loop(terminal, buffer):
             interface.status[2] = str(robot.state.behavior_display)
             t0 = t
             loops = 0
+            # print(f"{robot.motors.get(14).torque:.2f} / {robot.motors.get(14).set_torque:.2f} Nmm")
 
             # Temperature failsafe
             if temp > 70:   # AX limit is 75, XM limit is 80

@@ -3,6 +3,7 @@ Evaluate current robot state and modify setpoints using forward and inverse kine
 """
 from types import SimpleNamespace
 import numpy as np
+from numba import njit
 
 # Motor limits (deg)
 YAW_LIMIT_MIN = -70
@@ -17,15 +18,15 @@ TAIL_LIMIT_MIN = -80
 TAIL_LIMIT_MAX = 0
 
 # Robot geometry (mm)
-WIDTH = 154  # Body width
-LENGTH = 283.4  # Body length
-HEIGHT = 54  # Body height
-LINK1 = 23.5  # Shoulder link length
+WIDTH = 163.5  # Body width
+LENGTH = 282.9  # Body length
+HEIGHT = 48  # Body height
+LINK1 = 29.7  # Shoulder link length
 LINK2A = 111  # Upper leg link length
 LINK2B = 22.5  # Upper leg link vertical offset
 LINK3 = 90.3  # 115.4  # 99.5  # 98.7  # Lower leg link length
 LINK3_OFFSET = -17.53  # -13.64  # -11.63  # Angle offset
-TAIL = 330.0+20  # Tail length
+TAIL = 350  # Tail length
 
 # Leg numbering
 FL = 1  # Front left
@@ -47,11 +48,11 @@ KM = 30     # Expected robot weight (N)
 class Robot:
     def __init__(self, motors, controller=None):
         yaw = motors.add([1, 2, 3, 4], 'XM430-W350-T', lower=YAW_LIMIT_MIN, upper=YAW_LIMIT_MAX)
-        shoulder = motors.add([5, 6, 7, 8], 'AX18-A', lower=SHOULDER_LIMIT_MIN, upper=SHOULDER_LIMIT_MAX, mirror=(6, 7))
+        shoulder = motors.add([5, 6, 7, 8], 'XM430-W350-T', lower=SHOULDER_LIMIT_MIN, upper=SHOULDER_LIMIT_MAX)
         knee = motors.add([9, 10, 11, 12], 'XM430-W350-T', lower=KNEE_LIMIT_MIN, upper=KNEE_LIMIT_MAX,
                           offset={9: LINK3_OFFSET, 10: LINK3_OFFSET, 11: LINK3_OFFSET, 12: LINK3_OFFSET})
         body = motors.add(13, 'XM430-W350-T', lower=BODY_LIMIT_MIN, upper=BODY_LIMIT_MAX)
-        tail = motors.add(14, 'AX18-A', lower=TAIL_LIMIT_MIN, upper=TAIL_LIMIT_MAX, offset=90, mirror=(14,))
+        tail = motors.add(14, 'XM430-W350-T', lower=TAIL_LIMIT_MIN, upper=TAIL_LIMIT_MAX)
         self.motors = motors
         self.behavior = None
         state = SimpleNamespace()
@@ -61,7 +62,7 @@ class Robot:
         state.t_total = 0                       # Time elapsed since run start (seconds)
         state.teleop = False                    # Teleop mode - allow user input
         state.teleop_key = None                 # Teleop command (character)
-        state.preload = False                   # Disable inward grasping (TODO: flip this)
+        state.preload = True                    # Enable inward grasping
         state.f_goal = ()                       # Current force setpoints
         state.f_override = {}                   # Fixed force values for force optimization
         state.controller_display = ""           # Display name of current controller
@@ -123,14 +124,14 @@ class Robot:
         """
         point = np.array(point)
         if not inverse and not vector:
-            point = point + origin
+            point += origin
         a = self.transform_angle(origin, inverse)
         R = np.array(((1, 0, 0),
                       (0, cosd(a), -sind(a)),
                       (0, sind(a), cosd(a))))
         point = R @ point
         if inverse and not vector:
-            point = point - origin
+            point -= origin
         return point
 
     def transform_angle(self, origin, inverse=False):
@@ -226,9 +227,7 @@ class Leg:
             a2 = self.shoulder_motor.goal_angle if goal else self.shoulder_motor.angle
         if a3 is None:
             a3 = self.knee_motor.goal_angle if goal else self.knee_motor.angle
-        x = cosd(a1) * (LINK1 - LINK3 * sind(a2 + a3) + LINK2A * cosd(a2) - LINK2B * sind(a2))
-        y = sind(a1) * (LINK1 - LINK3 * sind(a2 + a3) + LINK2A * cosd(a2) - LINK2B * sind(a2))
-        z = - LINK3 * cosd(a2 + a3) - LINK2B * cosd(a2) - LINK2A * sind(a2)
+        x, y, z = fk(a1, a2, a3)
         if not relative:
             if self.mirror:
                 x *= -1
@@ -587,6 +586,7 @@ class Leg:
         for motor in (self.yaw_motor, self.shoulder_motor, self.knee_motor):
             if motor.set_angle < motor.lower or motor.set_angle > motor.upper:
                 out_of_bounds = True
+                print(f"Motor {motor.id} out of bounds with angle {motor.set_angle}!")
         return out_of_bounds
 
     def get_max_speed(self, dx, dy, dz, relative):
@@ -695,7 +695,7 @@ class TailJoint:
         :param goal: Return desired value instead of current value
         :return: Tail joint torque in Nmm
         """
-        offset = 280  # Nmm = TAIL * 0.8 No
+        offset = 0  # 280  # Nmm = TAIL * 0.8 N
         if fz is None:
             return self.motor.goal_torque if goal else self.motor.torque - offset
         if fy is None:
@@ -762,7 +762,7 @@ class TailJoint:
         :param direct: Modify the motor value directly instead of changing the setpoint
         """
 
-        t_max = 700
+        t_max = 1500  #700
         if t > t_max:
             t = t_max
         if t < -t_max:
@@ -848,16 +848,27 @@ class BodyJoint:
             self.motor.goal_torque = t
 
 
+#@njit
 def sind(a):
     return np.sin(np.deg2rad(a))
 
 
+#@njit
 def cosd(a):
     return np.cos(np.deg2rad(a))
 
 
+#@njit
 def tand(a):
     return np.tan(np.deg2rad(a))
+
+
+#@njit
+def fk(a1, a2, a3):
+    x = cosd(a1) * (LINK1 - LINK3 * sind(a2 + a3) + LINK2A * cosd(a2) - LINK2B * sind(a2))
+    y = sind(a1) * (LINK1 - LINK3 * sind(a2 + a3) + LINK2A * cosd(a2) - LINK2B * sind(a2))
+    z = - LINK3 * cosd(a2 + a3) - LINK2B * cosd(a2) - LINK2A * sind(a2)
+    return x, y, z
 
 
 if __name__ == "__main__":

@@ -1,8 +1,13 @@
 """
 Control robot state using different feedback control strategies
 """
+import time
+
 import numpy as np                  # pip install numpy
 from qpsolvers import solve_qp      # pip install qpsolvers[quadprog]
+from numba import njit
+
+import robot
 
 
 def control_off(robot, *_args, **_kwargs):
@@ -66,10 +71,10 @@ def admittance(robot, dt=0, init=False):
         # print(f'Current forces:\n{np.reshape(f[:-1], (4, 3)).T}, {f[-1]}')
     wrench = G @ f                                                  # Net wrench on body (6 x 1)
     G = G[:, :-1]                                                   # Remove tail for computing body displacement
-    A = ((np.eye(13) * w)[:-1, :-1] - G.T @ np.linalg.pinv(G.T))    # Transformation to internal motion space (13 x 13)
+    A = ((np.eye(13) * w)[:-1, :-1] - G.T @ np.linalg.pinv(G.T))    # Transformation to internal motion space (12 x 12)
 
     # Compute optimal forces (3 x 5)
-    if not state.preload:
+    if state.preload:
         angles = [90 - a for a in state.gripper_angles]
         f_goal = hang_qp(robot, wrench, state.f_override, gripper_angle=angles, verbose=verbose)
         state.f_goal = f_goal
@@ -120,6 +125,7 @@ def get_force_vector(robot, goal=False):
                            robot.tail.get_force(goal=goal)[2:]))
 
 
+#@njit
 def skew(x, y, z):
     """
     Return a 3x3 skew-symmetric matrix for the given vector
@@ -187,7 +193,7 @@ def hang_simple(robot, wrench, min_force=2):
     return forces
 
 
-def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=25, peel_angle=20, lateral_angle=30, gripper_angle=90, verbose=False):
+def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=25, peel_angle=20, lateral_angle=30, gripper_angle=0, verbose=False):
     """
         Solve quadratic program to determine the optimal contact forces
 
@@ -202,7 +208,7 @@ def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=25, peel_angle=20, 
         :return: 3x5 matrix of desired foot and tail forces
         """
     # wrench = np.array((0, 20, 0, -1000, 0, 0))
-    N = np.array(((0, 0, 0, 0), (0, 0, 0, 0), (1, 1, 1, 1)))
+    N = np.array(((0, 0, 0, 0), (0, 0, 0, 0), (1, 1, 1, 1)), dtype=float)
     if not hasattr(gripper_angle, "__len__"):
         gripper_angle = [gripper_angle, gripper_angle, gripper_angle, gripper_angle]
 
@@ -256,7 +262,7 @@ def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=25, peel_angle=20, 
     forces = np.zeros((3, 5))
     if x is None:
         print("Failed to find force solution")
-        return 0*hang_simple(robot, wrench)
+        return hang_simple(robot, wrench)
     for i in range(4):
         ind3 = slice(i * 3, i * 3 + 3)
         forces[:, i] = rot[i] @ x[ind3]
@@ -270,6 +276,7 @@ def hang_qp(robot, wrench, f_goal=(), min_force=0, max_force=25, peel_angle=20, 
     return forces
 
 
+#@njit
 def get_transform(normal, yaw):
     """
     Compute transform from gripper frame to robot body frame
@@ -278,8 +285,8 @@ def get_transform(normal, yaw):
     :param yaw: Rotation about normal vector in deg (positive y-axis = 0, positive x-axis = 90)
     """
     r_yaw = np.array(((cosd(yaw), sind(yaw), 0), (-sind(yaw), cosd(yaw), 0), (0, 0, 1)))
-    x = skew(0, 1, 0) @ normal
-    y = skew(*normal) @ x
+    x = np.cross((0.0, 1.0, 0.0), normal)
+    y = np.cross((normal[0], normal[1], normal[2]), x)
     r_normal = np.vstack((x, y, normal)).T
     return r_normal @ r_yaw
 
@@ -295,14 +302,17 @@ def mat2vec(x_mat):
     return np.hstack((x_mat[:, 0], x_mat[:, 1], x_mat[:, 2], x_mat[:, 3], x_mat[2, -1])).T
 
 
+#@njit
 def sind(a):
     return np.sin(np.deg2rad(a))
 
 
+#@njit
 def cosd(a):
     return np.cos(np.deg2rad(a))
 
 
+#@njit
 def tand(a):
     return np.tan(np.deg2rad(a))
 
@@ -325,4 +335,13 @@ if __name__ == "__main__":
 
     wrench_ = [  -3.39,   12.64,   0,  -655.62, -356.31,  0]
     force_ = {2: (0, 0, 0), 3: (0, 0, 0)}
-    hang_qp(robot_, wrench_, force_, min_force=0, gripper_angle=45, verbose=True)
+    import time
+
+    get_transform(np.array((1, 0, 0)), 0)
+    get_transform(np.array((1, 2, 3)), 4)
+    x = hang_qp(robot_, wrench_, force_, min_force=0, gripper_angle=45, verbose=True)
+    t = time.perf_counter()
+    for i in range(1000):
+        hang_qp(robot_, wrench_, force_, min_force=0, gripper_angle=45, verbose=True)
+    print(time.perf_counter()-t, "ms")
+    print(x)

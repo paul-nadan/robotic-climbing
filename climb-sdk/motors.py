@@ -234,6 +234,8 @@ class Motors:
         ids = (ids,) if not hasattr(ids, '__iter__') else ids
         for series, motor_list in self.motors_by_series.items():
             motor_list = list(filter(lambda m: m.id in ids or ids[0] is None, motor_list))
+            if not len(motor_list):
+                continue
             for motor in motor_list:
                 if motor.set_angle < motor.lower:
                     motor.set_angle = motor.lower
@@ -298,6 +300,8 @@ class Motors:
         ids = (ids,) if not hasattr(ids, '__iter__') else ids
         for series, motor_list in self.motors_by_series.items():
             motor_list = list(filter(lambda m: m.id in ids or ids[0] is None, motor_list))
+            if not len(motor_list):
+                continue
             if series == "AX":
                 sync = GroupSyncWrite(self.portHandler, self.packetHandler1, *MOVING_SPEED_AX)
                 for motor in motor_list:
@@ -368,6 +372,8 @@ class Motors:
         ids = (ids,) if not hasattr(ids, '__iter__') else ids
         for series, motor_list in self.motors_by_series.items():
             motor_list = list(filter(lambda m: m.id in ids or ids[0] is None, motor_list))
+            if not len(motor_list):
+                continue
             if series == "AX":
                 sync = GroupSyncWrite(self.portHandler, self.packetHandler1, *TORQUE_LIMIT_AX)
                 for motor in motor_list:

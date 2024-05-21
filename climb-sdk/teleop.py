@@ -241,12 +241,16 @@ class Terminal:
             robot.set_behavior(stand)
             print(t + "Stand")
         elif c == "s":
+            # robot.set_behavior(sprawl)
             robot.set_behavior(stick)
             robot.set_controller(control_off)
             print(t + "Stick")
         elif c == "w":
-            robot.set_behavior(walk)
-            print(t + "Walk")
+            robot.set_behavior(crawl)
+            print(t + "Crawl")
+        elif c == "h":
+            robot.set_behavior(stretch)
+            print(t + "Stretch")
         elif c == "c":
             robot.set_behavior(climb)
             print(t + "Climb")
